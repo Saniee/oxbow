@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { setContext } from '../contextKeys';
 import type { CommitNode } from './nodes';
 
 /** Commits copied for cherry-picking, kept oldest first (the order they will be applied). */
@@ -32,7 +33,7 @@ export class CherryPickClipboard implements vscode.Disposable {
   }
 
   private changed(): void {
-    void vscode.commands.executeCommand('setContext', 'slothgit.hasCherryPicks', this.commits.length > 0);
+    setContext('slothgit.hasCherryPicks', this.commits.length > 0);
     this.emitter.fire();
   }
 

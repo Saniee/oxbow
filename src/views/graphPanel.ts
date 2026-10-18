@@ -10,6 +10,7 @@ import { pageHtml, webviewOptions } from './webviewShell';
 import body from '../webview/graph/body.html';
 import type { CommitNode, FileNode } from './nodes';
 import { commitFiles, config } from './providers';
+import { registerWebviewNodes } from './webviewNodes';
 
 export class GraphPanel implements vscode.Disposable {
   private static current: GraphPanel | undefined;
@@ -167,20 +168,10 @@ export class GraphPanel implements vscode.Disposable {
   }
 }
 
-interface WebviewContext {
-  webview: string;
-  sha?: string;
-}
-
-/**
- * Commands run from the graph's context menu receive VS Code's webview context ({ webview, sha, … }) instead
- * of a tree node; swap it for the commit node so every command works unchanged.
- */
-export function fromGraph(args: unknown[]): unknown[] {
-  const [first] = args;
-  if (first && typeof first === 'object' && (first as WebviewContext).webview === 'slothgit.graph') {
-    const node = (first as WebviewContext).sha ? GraphPanel.commit((first as WebviewContext).sha!) : undefined;
+/** Commands run from the graph's context menu get the commit node of the row ({ sha } in its webview context). */
+export function registerGraphNodes(): vscode.Disposable {
+  return registerWebviewNodes('slothgit.graph', (context) => {
+    const node = typeof context.sha === 'string' ? GraphPanel.commit(context.sha) : undefined;
     return node ? [node] : [];
-  }
-  return args;
+  });
 }

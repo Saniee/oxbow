@@ -5,7 +5,9 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
+import type { ListId } from '../../src/tab/actions';
 import type { CommitNode, Node } from '../../src/views/nodes';
+import type { DetailBlock, TabRow } from '../../src/webview/messages';
 import { button, dismiss, input, pick, prompts, type Context } from './harness';
 
 export interface Scenario {
@@ -276,9 +278,9 @@ scenario('commits: colored by merged into main, pushed, not pushed', async (t) =
     const item = t.api.providers.commits.getTreeItem(await t.commit(subject)) as vscode.TreeItem;
     return ((item.iconPath as vscode.ThemeIcon).color as { id?: string } | undefined)?.id;
   };
-  assert.equal(await color('Login: error messages'), 'charts.red');
-  assert.equal(await color('Login: validate input'), 'charts.yellow');
-  assert.equal(await color('Add config'), 'charts.green', 'already on origin/main');
+  assert.equal(await color('Login: error messages'), 'slothgit.commitUnpushedIcon');
+  assert.equal(await color('Login: validate input'), 'slothgit.commitPushedIcon');
+  assert.equal(await color('Add config'), 'slothgit.commitMergedIcon', 'already on origin/main');
 });
 
 scenario('branch: move unpushed commits to a new branch', async (t) => {
@@ -341,29 +343,29 @@ scenario('branch: force push with lease', async (t) => {
   assert.equal(t.git(t.origin, 'rev-parse', 'feature/login'), rewritten);
 });
 
-scenario('sync view: shows the branch and counts, pushes and pulls the current branch', async (t) => {
+scenario('status panel: shows the branch and counts, pushes and pulls the current branch', async (t) => {
   await t.checkout('feature/login');
-  const { branch } = await t.api.sync.refresh();
+  const { branch } = await t.api.tab.status();
   assert.deepEqual(
-    { name: branch?.name, upstream: branch?.upstream?.name, ahead: branch?.ahead },
+    { name: branch?.name, upstream: branch?.upstream, ahead: branch?.ahead },
     { name: 'feature/login', upstream: 'origin/feature/login', ahead: 1 },
   );
   await t.run('slothgit.sync.push');
   assert.equal(t.git(t.origin, 'rev-parse', 'feature/login'), t.rev('feature/login'));
-  assert.equal((await t.api.sync.refresh()).branch?.ahead, 0, 'the view follows the push');
+  assert.equal((await t.api.tab.status()).branch?.ahead, 0, 'the panel follows the push');
 
   await t.checkout('release/1.x');
-  assert.equal((await t.api.sync.refresh()).branch?.behind, 1);
+  assert.equal((await t.api.tab.status()).branch?.behind, 1);
   await t.run('slothgit.sync.pull');
   assert.equal(t.rev('HEAD'), t.rev('origin/release/1.x'));
-  assert.equal((await t.api.sync.refresh()).branch?.behind, 0);
+  assert.equal((await t.api.tab.status()).branch?.behind, 0);
 });
 
-scenario('sync view: publish a new branch, push to another branch, force push', async (t) => {
+scenario('status panel: publish a new branch, push to another branch, force push', async (t) => {
   await t.cleanTree();
   t.sh('switch', '-q', '-c', 'topic');
   await t.refresh();
-  assert.equal((await t.api.sync.refresh()).branch?.upstream, undefined, 'not published yet');
+  assert.equal((await t.api.tab.status()).branch?.upstream, undefined, 'not published yet');
   await t.run('slothgit.sync.push', [], [pick('origin', /Push topic to/)]);
   assert.equal(t.sh('rev-parse', '--abbrev-ref', 'topic@{u}'), 'origin/topic');
 
@@ -377,7 +379,7 @@ scenario('sync view: publish a new branch, push to another branch, force push', 
   assert.equal(t.git(t.origin, 'rev-parse', 'topic'), t.rev('topic'));
 });
 
-scenario('sync view: pull without an upstream or on a detached HEAD warns', async (t) => {
+scenario('status panel: pull without an upstream or on a detached HEAD warns', async (t) => {
   await t.cleanTree();
   t.sh('switch', '-q', 'feature/search');
   await t.refresh();
@@ -385,28 +387,28 @@ scenario('sync view: pull without an upstream or on a detached HEAD warns', asyn
   assert.ok(t.saw('warning', /has no upstream branch to pull from/));
   t.sh('switch', '-q', '--detach', 'HEAD');
   await t.refresh();
-  assert.ok((await t.api.sync.refresh()).detached);
+  assert.ok((await t.api.tab.status()).detached);
   await t.run('slothgit.sync.push');
   assert.ok(t.saw('warning', /HEAD is detached/));
 });
 
-scenario('sync view: the page shows the branch, and ⌄ offers the other push actions', async (t) => {
-  await vscode.commands.executeCommand('slothgit.sync.focus');
+scenario('status panel: the page shows the branch, and ⌄ offers the other push actions', async (t) => {
   await t.checkout('feature/login');
-  await waitFor('the Sync view to show feature/login', () =>
-    (t.api.sync.renderedText ?? '').includes('feature/login | → origin/feature/login | ↓ Pull | ↑ Push 1'),
-  );
+  await waitFor('the Status panel to show feature/login', () => {
+    const status = t.api.tab.lastSent('status')?.status;
+    return status?.branch?.name === 'feature/login' && status.branch.upstream === 'origin/feature/login' && status.branch.ahead === 1 ? status : undefined;
+  });
   prompts.queue.push(pick('Push to Another Branch…', /Push/), pick('origin', /Push feature\/login to/), input('login-copy'));
-  await t.api.sync.showMenu('push');
+  await t.api.tab.pullPushMenu('push');
   t.check('the Push menu');
   assert.equal(t.git(t.origin, 'rev-parse', 'login-copy'), t.rev('feature/login'));
 
   prompts.queue.push(pick('Fetch All Remotes', /Pull/));
-  await t.api.sync.showMenu('pull');
+  await t.api.tab.pullPushMenu('pull');
   t.check('the Pull menu');
 });
 
-scenario('sync view: pull with rebase puts local commits on top of the upstream', async (t) => {
+scenario('status panel: pull with rebase puts local commits on top of the upstream', async (t) => {
   await t.checkout('release/1.x');
   fs.writeFileSync(path.join(t.repo, 'local.txt'), 'local\n');
   t.sh('add', 'local.txt');
@@ -790,7 +792,7 @@ scenario('commit: move up and down', async (t) => {
 });
 
 scenario('commits: the cursor follows a commit as it is moved and reworded', async (t) => {
-  await vscode.commands.executeCommand('slothgit.commits.focus');
+  await vscode.commands.executeCommand('slothgit.open', 'commits');
   // "Add settings page" touches no file the two newer commits do, so it can move past both.
   await t.run('slothgit.commit.moveUp', [await t.commit('Add settings page')]);
   assert.deepEqual(await t.selectedSubjects(['Add settings page']), ['Add settings page']);
@@ -1360,6 +1362,140 @@ scenario('reflog: check out, branch from and cherry-pick an entry', async (t) =>
   assert.equal(t.rev('from-reflog'), t.rev('feature/search'));
   await t.run('slothgit.commit.checkout', [entry]);
   assert.equal(t.rev('HEAD'), t.rev('feature/search'));
+});
+
+// --- The SlothGit tab -------------------------------------------------------------------------------
+
+/** A row the tab last sent for `list`, once one matches (lists redraw after each reload). */
+function tabRow(t: Context, list: ListId, match: (row: TabRow) => boolean): Promise<TabRow> {
+  return waitFor(`a matching row in the tab's ${list} list`, () => t.api.tab.lastList(list)?.rows.find(match));
+}
+
+/** What VS Code passes a command run from a row's right-click menu. */
+const rightClick = (row: TabRow) => ({ webview: 'slothgit.tab', webviewSection: 'x', slothgitId: row.id, slothgitItem: row.item });
+
+function detailBlock<K extends DetailBlock['type']>(t: Context, type: K): Extract<DetailBlock, { type: K }> {
+  const block = t.api.tab.lastSent('detail')?.detail.blocks.find((b) => b.type === type);
+  assert.ok(block, `the detail pane has a ${type} block`);
+  return block as Extract<DetailBlock, { type: K }>;
+}
+
+scenario('tab: selecting a commit shows its message, files and patch', async (t) => {
+  const row = await tabRow(t, 'commits', (r) => r.commit?.subject === 'Add settings page');
+  await t.api.tab.receive({ type: 'select', list: 'commits', ids: [row.id] });
+  assert.match(t.api.tab.lastSent('detail')!.detail.title, /Add settings page/);
+  assert.equal(detailBlock(t, 'message').subject, 'Add settings page');
+  const files = detailBlock(t, 'rows').rows;
+  const diff = detailBlock(t, 'diff');
+  assert.deepEqual(
+    files.map((f) => f.label),
+    t.sh('show', '--name-only', '--format=', row.commit!.shortSha).split('\n').map((f) => path.posix.basename(f)),
+    'the files of the commit',
+  );
+  assert.equal(diff.files.length, files.length, 'a patch for each file');
+  assert.ok(diff.files[0].hunks.length > 0);
+  // A file row's right-click menu gets its file node.
+  await t.run('slothgit.file.openAtRevision', [rightClick(files[0])]);
+  await waitFor('the file to open', () => activeTabLabel().includes(files[0].label));
+});
+
+scenario('tab: a right-click command acts on the selection the row is part of', async (t) => {
+  await t.checkout('feature/search');
+  const a = await tabRow(t, 'commits', (r) => r.commit?.subject === 'Add filters');
+  const b = await tabRow(t, 'commits', (r) => r.commit?.subject === 'Add sorting');
+  await t.api.tab.receive({ type: 'select', list: 'commits', ids: [a.id, b.id] });
+  assert.deepEqual(t.api.views.commits.selection.map((n) => (n as CommitNode).subject), ['Add filters', 'Add sorting']);
+  await t.run('slothgit.commit.drop', [rightClick(a)], [button('Continue', /Drop 2 commits/)]);
+  assert.deepEqual(t.subjects(2), ['fixup! Add search', 'Add search']);
+});
+
+scenario('tab: a branch shows its log; a commit of it opens, and Back returns', async (t) => {
+  const branch = await tabRow(t, 'local', (r) => r.label === 'feature/search');
+  await t.api.tab.receive({ type: 'select', list: 'local', ids: [branch.id] });
+  assert.equal(t.api.tab.lastSent('detail')!.detail.title, 'Log of feature/search');
+  const commits = detailBlock(t, 'rows').rows;
+  assert.equal(commits[0].commit?.subject, t.subjects(1, 'feature/search')[0]);
+  await t.api.tab.receive({ type: 'detailSelect', id: commits[0].id });
+  const detail = t.api.tab.lastSent('detail')!.detail;
+  assert.match(detail.title, new RegExp(t.subjects(1, 'feature/search')[0]));
+  assert.equal(detail.back, 'Back to feature/search');
+  await t.api.tab.receive({ type: 'back' });
+  assert.equal(t.api.tab.lastSent('detail')!.detail.title, 'Log of feature/search');
+});
+
+scenario('files panel: stage, unstage and discard files', async (t) => {
+  fs.writeFileSync(path.join(t.repo, 'new.txt'), 'new\n');
+  await t.refresh();
+  const row = (name: string) => tabRow(t, 'files', (r) => r.label === name);
+  assert.deepEqual(
+    (await waitFor('three files', () => (t.api.tab.lastList('files')?.rows.length === 3 ? t.api.tab.lastList('files') : undefined))).rows.map((r) => `${r.status} ${r.label}`),
+    ['?? new.txt', 'A  notes.txt', ' M README.md'],
+    'sorted by path, ignoring case',
+  );
+  await t.api.tab.receive({ type: 'command', command: 'slothgit.file.stage', id: (await row('README.md')).id });
+  await t.api.tab.receive({ type: 'command', command: 'slothgit.file.unstage', id: (await row('notes.txt')).id });
+  assert.equal(t.status(), 'M  README.md\n?? new.txt\n?? notes.txt');
+  prompts.queue.push(button('Discard', /new\.txt\? New files are deleted/));
+  await t.api.tab.receive({ type: 'command', command: 'slothgit.file.discard', id: (await row('new.txt')).id });
+  t.check('discard');
+  assert.equal(fs.existsSync(path.join(t.repo, 'new.txt')), false);
+  // A button runs only the commands the tab offers.
+  await t.api.tab.receive({ type: 'command', command: 'workbench.action.closeWindow' });
+  await t.run('slothgit.files.stageAll');
+  assert.equal(t.status(), 'M  README.md\nA  notes.txt');
+  await t.run('slothgit.files.unstageAll');
+  assert.equal(t.status(), ' M README.md\n?? notes.txt');
+  await t.run('slothgit.files.discardAll', [], [button('Discard All', /cannot be undone/)]);
+  assert.equal(t.status(), '');
+});
+
+scenario('files panel: an uncommitted change shows its staged and unstaged diffs', async (t) => {
+  t.sh('add', 'README.md');
+  fs.appendFileSync(path.join(t.repo, 'README.md'), 'more\n');
+  await t.refresh();
+  const row = await tabRow(t, 'files', (r) => r.label === 'README.md' && r.status === 'MM');
+  await t.api.tab.receive({ type: 'select', list: 'files', ids: [row.id] });
+  const diffs = t.api.tab.lastSent('detail')!.detail.blocks.filter((b) => b.type === 'diff');
+  assert.deepEqual(
+    diffs.map((d) => d.title),
+    ['Unstaged changes', 'Staged changes'],
+  );
+});
+
+scenario('commit box: commit the staged changes, amend keeping the message, stage all when nothing is staged', async (t) => {
+  await t.api.tab.receive({ type: 'commit', message: 'From the commit box', amend: false });
+  assert.equal(t.subjects(1)[0], 'From the commit box');
+  assert.equal(t.status(), ' M README.md', 'only what was staged');
+  assert.equal(t.api.tab.lastSent('committed')?.type, 'committed', 'the box is cleared');
+
+  t.sh('add', 'README.md');
+  await t.refresh();
+  await t.api.tab.receive({ type: 'commit', message: '', amend: true });
+  assert.equal(t.subjects(1)[0], 'From the commit box', 'an empty message keeps the old one');
+  assert.equal(t.status(), '');
+  assert.match(t.sh('show', '--name-only', '--format='), /README\.md/);
+
+  fs.writeFileSync(path.join(t.repo, 'later.txt'), 'later\n');
+  await t.refresh();
+  prompts.queue.push(button('Stage All and Commit', /no staged changes/));
+  await t.api.tab.receive({ type: 'commit', message: 'Everything', amend: false });
+  t.check('commit with nothing staged');
+  assert.equal(t.subjects(1)[0], 'Everything');
+  assert.equal(t.status(), '');
+});
+
+scenario('status panel: its buttons run through the tab', async (t) => {
+  await t.api.tab.receive({ type: 'command', command: 'slothgit.sync.fetch' });
+  assert.equal(t.api.log.entries[0]?.title, 'Fetching');
+});
+
+scenario('command log: lists what an action ran', async (t) => {
+  await t.run('slothgit.stash.push', [], [input('logged stash')]);
+  const [entry] = t.api.log.entries;
+  assert.equal(entry.title, 'Stashing');
+  assert.equal(entry.status, 'done');
+  assert.ok(entry.commands.some((c) => c.startsWith('git stash push')), entry.commands.join('\n'));
+  assert.ok(!entry.commands.some((c) => /^git (rev-parse|status|log)\b/.test(c)), 'read-only commands are left out');
 });
 
 export default scenarios;

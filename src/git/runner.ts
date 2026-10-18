@@ -34,6 +34,21 @@ export interface GitDirs {
   commonDir: string;
 }
 
+/** A finished git command, as told to onGitCommand listeners. */
+export interface GitCommandEvent {
+  cwd: string;
+  args: readonly string[];
+  exitCode: number;
+}
+
+const commandListeners = new Set<(event: GitCommandEvent) => void>();
+
+/** Calls `listener` after every git command any Git runs (the SlothGit tab's command log). Returns an unsubscribe. */
+export function onGitCommand(listener: (event: GitCommandEvent) => void): () => void {
+  commandListeners.add(listener);
+  return () => commandListeners.delete(listener);
+}
+
 /** Per working tree folder, so looking up files in the git directory doesn't run git each time. */
 const gitDirs = new Map<string, Promise<GitDirs>>();
 
@@ -57,6 +72,13 @@ export class Git {
         },
         (error, stdout, stderr) => {
           const exitCode = error ? (typeof error.code === 'number' ? error.code : -1) : 0;
+          for (const listener of commandListeners) {
+            try {
+              listener({ cwd: this.cwd, args, exitCode });
+            } catch {
+              // A broken log must not break git.
+            }
+          }
           if (error && !options.allowedExitCodes?.includes(exitCode)) {
             const detail = (stderr || stdout).trim() || error.message;
             reject(new GitError(detail, stderr, exitCode, args));

@@ -10,6 +10,6 @@ A **worktree** is an extra working folder for the same repository, with a differ
 - You want to run or test one branch while you keep coding on another.
 - You're reviewing someone's branch and don't want to disturb your own work.
 
-**In SlothGit:** right-click a branch → **New Worktree…**, pick a folder, then **Open in New Window**. Worktrees are listed in the **Branches** view under **Worktrees**. When you're done, right-click the worktree → **Remove Worktree**; the branch itself is kept.
+**In SlothGit:** right-click a branch → **New Worktree…**, pick a folder, then **Open in New Window**. Worktrees are listed in the **Branches** panel's **Worktrees** tab. When you're done, right-click the worktree → **Remove Worktree**; the branch itself is kept.
 
 A branch can only be checked out in one worktree at a time. If you try to check it out elsewhere, SlothGit offers to open the worktree that has it.

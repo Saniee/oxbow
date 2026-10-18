@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import type { CommandLog } from './git/commandLog';
 import { GitOps, UserError, type ResetMode } from './git/operations';
 import { getOperation, type Operation } from './git/queries';
 import { branchNameError } from './git/refName';
@@ -27,6 +28,7 @@ export function createRunner(
   repos: RepoManager,
   output: vscode.LogOutputChannel,
   refreshAll: (force: boolean) => Promise<void>,
+  log?: CommandLog,
 ): Runner {
   let busy = false;
 
@@ -42,6 +44,7 @@ export function createRunner(
       return false;
     }
     busy = true;
+    const entry = log?.start(title);
     let failure: { error: unknown } | undefined;
     let info: string | void = undefined;
     try {
@@ -50,6 +53,7 @@ export function createRunner(
       failure = { error };
     } finally {
       busy = false;
+      if (entry) log!.finish(entry, !failure);
       await repo.status().catch(() => undefined);
       await refreshAll(true);
     }

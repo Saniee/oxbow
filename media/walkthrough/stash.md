@@ -2,7 +2,7 @@
 
 A **stash** saves your uncommitted changes and gives you a clean working folder, without making a commit. Use it when you need to switch tasks quickly, for example to fix something on another branch, and you're not ready to commit what you have.
 
-Press **+** on the **Stashes** view title bar to stash all your changes. More options are in its **…** menu:
+Press the stash button on the **Stash** panel's title (or the **Files** panel's) to stash all your changes. More options are in its **…** menu:
 
 - **Stash Staged Changes**: only what you've staged.
 - **Stash All Changes, Keep Staged**: stash everything, but leave the staged changes in place too.

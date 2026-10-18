@@ -33,6 +33,14 @@ export interface Repository {
   /** Runs `git push [flags] <remoteName> <branchName>`; branchName can be any refspec. */
   pull(): Promise<void>;
   push(remoteName?: string, branchName?: string, setUpstream?: boolean, force?: ForcePushMode): Promise<void>;
+  /** Commits like the Source Control view's Commit button, so hooks, signing and git.postCommitCommand apply. */
+  commit(message: string, opts?: CommitOptions): Promise<void>;
+  /** The Source Control view's commit message box. */
+  readonly inputBox: { value: string };
+}
+
+export interface CommitOptions {
+  amend?: boolean;
 }
 
 export interface API {

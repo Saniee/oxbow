@@ -22,10 +22,9 @@ export async function run(): Promise<void> {
   const api = (await ext.activate()) as SlothGitTestApi;
   const gitApi = (await vscode.extensions.getExtension('vscode.git')!.activate()).getAPI(1);
   for (let i = 0; i < 100 && gitApi.repositories.length === 0; i++) await new Promise((r) => setTimeout(r, 100));
-  // Views only load while visible.
-  for (const view of ['slothgit.sync', 'slothgit.branches', 'slothgit.commits', 'slothgit.stashes', 'slothgit.reflog']) {
-    await vscode.commands.executeCommand(`${view}.focus`);
-  }
+  // The lists only load while the SlothGit tab is visible.
+  await vscode.commands.executeCommand('slothgit.open');
+  for (let i = 0; i < 100 && !api.tab.renderedLists.commits; i++) await new Promise((r) => setTimeout(r, 100));
 
   const t = new Context(api, playground, gitApi.repositories[0]);
   t.takeSnapshot();

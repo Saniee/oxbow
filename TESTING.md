@@ -12,7 +12,7 @@ This creates `../slothgit-playground/repo` (pass a folder to put it elsewhere: `
 
 Re-run the command whenever you want to start over. It replaces the previous playground (close VS Code windows on it first).
 
-**Undo** (↶ on the Commits view) is a quick way back after most experiments, and it is worth testing in its own right.
+**Undo** (↶ on the Commits panel) is a quick way back after most experiments, and it is worth testing in its own right.
 
 ## What's in it
 
@@ -41,7 +41,7 @@ Re-run the command whenever you want to start over. It replaces the previous pla
 
 Ticked items are tested and working in 1.0.0. If you find something odd, such as a wrong label, a missing refresh, a confusing prompt or an error in **Output → SlothGit**, please open an issue.
 
-### Branches view
+### Branches panel
 - [x] Sort order: recency, date, name
 - [x] Checkout, checkout previous, new branch, rename, delete (local / remote / both; unmerged asks to force)
 - [x] Merge: regular, `--no-ff`, squash
@@ -54,7 +54,7 @@ Ticked items are tested and working in 1.0.0. If you find something odd, such as
 - [x] Tags: create (lightweight / annotated), push, delete
 - [x] Worktrees: add (existing / new branch), open in new or current window, copy path, remove (dirty asks), prune
 
-### Commits view
+### Commits panel
 - [x] Squash, fixup, drop (multi-select), reword, reword in editor, move up / down
 - [x] The cursor stays on the commit after each of those (move up / down follows it)
 - [x] Edit (pause), then change files, stage, Continue
@@ -83,9 +83,22 @@ Ticked items are tested and working in 1.0.0. If you find something odd, such as
 ### General
 - [x] Right-click menus on a commit, a branch and in the Commit Graph: More Rewrite Actions, Bisect and Upstream submenus hold the moved items; nothing appears where it can't run
 - [x] A slow action (push to a slow remote, a long rebase) shows a status-bar spinner and, after ~1.5 s, a notification; quick actions flash "…: done" in the status bar
-- [x] Sync view: branch, upstream and ↑↓ counts follow commits, pushes and checkouts; Pull, Push and Publish Branch; the ⌄ quick picks and right-click menus: Pull (Rebase), Fetch, Fetch All, Force Push, Push to Another Branch, Set Upstream
+- [ ] Status panel: branch, upstream and ↑↓ counts follow commits, pushes and checkouts; Pull, Push and Publish Branch; the ⌄ quick picks and right-click menus: Pull (Rebase), Fetch, Fetch All, Force Push, Push to Another Branch, Set Upstream; Continue / Skip / Abort while an operation is stopped
 - [x] Rewriting pushed commits asks first (setting `slothgit.confirmRewritingPushedCommits`)
-- [x] Views refresh after you commit or switch branches outside SlothGit
+- [ ] The tab refreshes after you commit or switch branches outside SlothGit, and the Files panel after you edit a file
 - [x] Multi-root workspace / several repositories: Switch Repository
-- [x] Simple Mode: the eye button on the Changes title bar toggles it; advanced actions and the Worktrees section are hidden
+- [ ] Simple Mode: the Status panel's … menu toggles it; advanced actions, buttons and the Worktrees and Reflog tabs are hidden
 - [x] `codegit.*` settings from before the rename are copied to `slothgit.*`
+
+### SlothGit tab
+- [ ] Opens from the Activity Bar icon, the Source Control title bar button and the Command Palette; reopens after a window reload
+- [ ] Every list: right-click shows the same menu the old view had; hover buttons and panel title buttons (and their … menus) run their commands
+- [ ] Ctrl- and Shift-click select several commits; Squash / Drop from the right-click menu apply to all of them
+- [ ] Selecting a commit, a reflog entry, a stash, a branch, a remote, a tag, a worktree and a file shows it on the right; a branch's log opens its commits, and Back returns
+- [ ] The patch: colours, line numbers, a file header collapses its file; "Open in the Diff Editor" and clicking a file row open the native diff beside the tab
+- [ ] A large commit shows the start of its diff and "Show the Whole Diff"
+- [ ] Files panel: stage / unstage / discard one file, several (Ctrl-click) and all; a file with staged and unstaged changes asks which to discard; conflicts open in the merge editor
+- [ ] Commit box: commit, amend (with and without a new message), nothing staged offers to stage everything; the draft survives closing and reopening the tab
+- [ ] Command Log: each action with the git commands it ran; failed ones in red; Clear
+- [ ] Dragging the two dividers resizes the panels; the sizes are remembered
+- [ ] Light, dark and high-contrast themes

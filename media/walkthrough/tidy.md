@@ -1,6 +1,6 @@
 # Tidy up commits before you share them
 
-While commits are still red (not pushed), you can reshape them so the history tells a clear story. Right-click a commit in the **Commits** view:
+While commits are still red (not pushed), you can reshape them so the history tells a clear story. Right-click a commit in the **Commits** panel:
 
 | Action | What it does | When to use it |
 | --- | --- | --- |

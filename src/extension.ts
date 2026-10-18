@@ -1,19 +1,25 @@
 import * as vscode from 'vscode';
+import { setContext } from './contextKeys';
 import { registerBranchCommands } from './branchCommands';
 import { registerCommands } from './commands';
+import { registerFileCommands } from './fileCommands';
+import { CommandLog } from './git/commandLog';
 import { getBisectState, getOperation, type Operation } from './git/queries';
 import { registerHistoryCommands } from './historyCommands';
 import { RepoManager } from './repoManager';
 import { createRunner } from './runner';
+import type { ListId } from './tab/actions';
+import { SlothGitTab } from './tab/tabPanel';
 import type { GitExtension } from './types/git';
 import { BranchesProvider } from './views/branches';
 import { CherryPickClipboard } from './views/cherryPickClipboard';
 import { CustomPatch } from './views/customPatch';
-import { GraphPanel } from './views/graphPanel';
-import { SyncViewProvider } from './views/syncView';
+import { FilesProvider } from './views/files';
+import { GraphPanel, registerGraphNodes } from './views/graphPanel';
 import { initLearn, learn, type LearnTopic } from './learn';
 import type { Node } from './views/nodes';
 import { CommitsProvider, ReflogProvider, StashProvider } from './views/providers';
+import type { ListView } from './views/webviewNodes';
 
 const OPERATION_LABELS: Record<Operation, string> = {
   rebase: 'Rebasing',
@@ -22,11 +28,13 @@ const OPERATION_LABELS: Record<Operation, string> = {
   merge: 'Merging',
 };
 
-/** Returned from activate() for the smoke test; not a stable API. */
+/** Returned from activate() for the smoke and end-to-end tests; not a stable API. */
 export interface SlothGitTestApi {
-  providers: Record<string, vscode.TreeDataProvider<Node>>;
-  views: Record<string, vscode.TreeView<Node>>;
-  sync: SyncViewProvider;
+  providers: Record<'files' | 'commits' | 'branches' | 'stashes' | 'reflog', vscode.TreeDataProvider<Node>>;
+  /** The tab's lists, with their selection, as commands see them. */
+  views: Record<'files' | 'commits' | 'branches' | 'stashes' | 'reflog', ListView>;
+  tab: SlothGitTab;
+  log: CommandLog;
   /** Rows the open Commit Graph page last drew. */
   graphRenderedRows(): number | undefined;
   refreshAll(force: boolean): Promise<void>;
@@ -50,20 +58,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<SlothG
   const repos = new RepoManager(gitExtension.getAPI(1), context.asAbsolutePath('dist/rebaseEditor.js'));
   const clipboard = new CherryPickClipboard();
   const patch = new CustomPatch();
+  const log = new CommandLog(() => repos.repository?.rootUri.fsPath);
+  const files = new FilesProvider(repos, output);
   const commits = new CommitsProvider(repos, output, clipboard);
   const stashes = new StashProvider(repos, output);
   const reflog = new ReflogProvider(repos, output);
   const branches = new BranchesProvider(repos, output, clipboard);
-  const sync = new SyncViewProvider(context.extension, repos, output);
-
-  const commitsView = vscode.window.createTreeView<Node>('slothgit.commits', {
-    treeDataProvider: commits,
-    canSelectMany: true,
-    showCollapseAll: true,
-  });
-  const branchesView = vscode.window.createTreeView<Node>('slothgit.branches', { treeDataProvider: branches });
-  const stashView = vscode.window.createTreeView<Node>('slothgit.stashes', { treeDataProvider: stashes });
-  const reflogView = vscode.window.createTreeView<Node>('slothgit.reflog', { treeDataProvider: reflog, canSelectMany: true });
 
   const statusItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
   statusItem.command = 'slothgit.operation.menu';
@@ -74,7 +74,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<SlothG
     const [operation, bisect] = git
       ? await Promise.all([getOperation(git).catch(() => undefined), getBisectState(git).catch(() => undefined)])
       : [undefined, undefined];
-    await vscode.commands.executeCommand('setContext', 'slothgit.operation', operation ?? '');
+    setContext('slothgit.operation', operation ?? '');
     if (operation) {
       statusItem.text = `$(git-merge) ${OPERATION_LABELS[operation]}…`;
       statusItem.tooltip = 'SlothGit: continue, skip or abort';
@@ -82,8 +82,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<SlothG
       statusItem.show();
     } else if (bisect) {
       statusItem.text = '$(bug) Bisecting…';
-      statusItem.tooltip = 'SlothGit: mark the checked-out commit as good or bad in the Commits view';
-      statusItem.command = 'slothgit.commits.focus';
+      statusItem.tooltip = 'SlothGit: mark the checked-out commit as good or bad in the Commits panel';
+      statusItem.command = { command: 'slothgit.open', title: 'Open SlothGit', arguments: ['commits'] };
       statusItem.show();
     } else {
       statusItem.hide();
@@ -93,32 +93,50 @@ export async function activate(context: vscode.ExtensionContext): Promise<SlothG
   async function refreshAll(force: boolean): Promise<void> {
     await repos.markLoaded();
     await Promise.all([
+      files.reload(force),
       commits.reload(force),
       branches.reload(force),
       stashes.reload(force),
       reflog.reload(force),
-      sync.reload(),
+      tab.reload(),
       updateOperation(),
     ]);
   }
 
-  const runner = createRunner(repos, output, refreshAll);
+  const runner = createRunner(repos, output, refreshAll, log);
+  const tab = new SlothGitTab(context, repos, { files, branches, commits, reflog, stashes }, runner, log);
+  const views = {
+    files: tab.view('files'),
+    commits: tab.view('commits'),
+    branches: tab.combinedView(['local', 'remotes', 'tags', 'worktrees']),
+    stashes: tab.view('stash'),
+    reflog: tab.view('reflog'),
+  };
+
+  // The Activity Bar's SlothGit icon: opening its (empty) sidebar view opens the tab.
+  const launcher = vscode.window.createTreeView('slothgit.launcher', { treeDataProvider: { getChildren: () => [], getTreeItem: (i: never) => i } });
 
   context.subscriptions.push(
     repos,
     clipboard,
     patch,
-    commitsView,
-    branchesView,
-    stashView,
-    reflogView,
+    log,
+    tab,
     statusItem,
-    commits.attach(commitsView),
-    branches.attach(branchesView),
-    stashes.attach(stashView),
-    reflog.attach(reflogView),
-    vscode.window.registerWebviewViewProvider(SyncViewProvider.viewId, sync),
+    launcher,
+    launcher.onDidChangeVisibility((e) => e.visible && tab.show()),
+    files.attach(tab),
+    commits.attach(tab),
+    branches.attach(tab),
+    stashes.attach(tab),
+    reflog.attach(tab),
+    registerGraphNodes(),
     repos.onDidChange(() => refreshAll(false)),
+    // The Files panel shows every edit; the other lists only change with refs and history (onDidChange).
+    repos.onDidChangeWorkingTree(() => {
+      void files.reload();
+      void tab.workingTreeChanged();
+    }),
     clipboard.onDidChange(() => {
       commits.redraw();
       branches.redraw();
@@ -126,22 +144,23 @@ export async function activate(context: vscode.ExtensionContext): Promise<SlothG
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (e.affectsConfiguration('slothgit')) void refreshAll(true);
     }),
-    ...registerCommands({ repos, commits, commitsView, stashView, clipboard, patch, runner, refreshAll }),
-    ...registerBranchCommands({ repos, branches, branchesView, commits, runner }),
-    ...registerHistoryCommands({ repos, commits, commitsView, runner, refreshAll }),
+    ...registerCommands({ repos, commits, commitsView: views.commits, stashView: views.stashes, clipboard, patch, runner, refreshAll }),
+    ...registerBranchCommands({ repos, branches, branchesView: views.branches, commits, runner }),
+    ...registerHistoryCommands({ repos, commits, commitsView: views.commits, runner, refreshAll }),
+    ...registerFileCommands({ repos, files, filesView: views.files, runner }),
+    vscode.commands.registerCommand('slothgit.open', (list?: ListId) => tab.show(typeof list === 'string' ? list : undefined)),
     vscode.commands.registerCommand('slothgit.graph.open', () => GraphPanel.show(context, repos)),
     vscode.commands.registerCommand('slothgit.simpleMode.on', () => setSimpleMode(true)),
     vscode.commands.registerCommand('slothgit.simpleMode.off', () => setSimpleMode(false)),
     vscode.commands.registerCommand('slothgit.learn', (topic?: LearnTopic) => learn(topic)),
   );
 
-  hideGraphOnce(context, [commitsView, branchesView, stashView, reflogView]);
-
   void refreshAll(true);
   return {
-    providers: { commits, branches, stashes, reflog },
-    views: { commits: commitsView, branches: branchesView, stashes: stashView, reflog: reflogView },
-    sync,
+    providers: { files, commits, branches, stashes, reflog },
+    views,
+    tab,
+    log,
     graphRenderedRows: () => GraphPanel.renderedRows(),
     refreshAll,
     migrateSettings: async () => {
@@ -197,31 +216,6 @@ export async function migrateSettings(context: vscode.ExtensionContext, output: 
     for (const folder of folders) await copy(folder, 'workspaceFolderValue', vscode.ConfigurationTarget.WorkspaceFolder);
     await context.workspaceState.update(SETTINGS_MIGRATED_KEY, true);
   }
-}
-
-const GRAPH_HIDDEN_KEY = 'graphViewHidden';
-
-/**
- * The Commits view replaces the built-in Graph view, so hide that once, the first time the Source Control
- * sidebar is open (VS Code only hides views in an open container). If the user shows it again, it stays.
- */
-function hideGraphOnce(context: vscode.ExtensionContext, views: vscode.TreeView<Node>[]): void {
-  if (context.globalState.get(GRAPH_HIDDEN_KEY)) return;
-  let done = false;
-  const hide = async () => {
-    if (done) return;
-    done = true;
-    listeners.forEach((l) => l.dispose());
-    try {
-      await vscode.commands.executeCommand('workbench.scm.history.removeView');
-    } catch {
-      // Older VS Code without the Graph view.
-    }
-    await context.globalState.update(GRAPH_HIDDEN_KEY, true);
-  };
-  const listeners = views.map((v) => v.onDidChangeVisibility((e) => e.visible && void hide()));
-  context.subscriptions.push(...listeners);
-  if (views.some((v) => v.visible)) void hide();
 }
 
 export function deactivate(): void {}

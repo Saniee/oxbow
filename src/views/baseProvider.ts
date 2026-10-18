@@ -3,15 +3,22 @@ import type { Git } from '../git/runner';
 import type { RepoManager } from '../repoManager';
 import { fileTreeItem, type Node } from './nodes';
 
+/** What shows a provider's items (the SlothGit tab). Providers only load while it is visible. */
+export interface ProviderHost {
+  readonly visible: boolean;
+  readonly onDidChangeVisibility: vscode.Event<boolean>;
+}
+
 /**
- * Loads root items only while its view is visible, and only notifies the tree when the data
- * actually changed, so frequent repository state events don't cause flicker or lost selection.
+ * Loads root items only while its host is visible, and only notifies listeners when the data actually changed,
+ * so frequent repository state events don't cause flicker or lost selection. Items are vscode.TreeItems: the
+ * tab draws them as rows, with the contextValue picking their menus.
  */
 export abstract class BaseProvider<TRoot extends Node> implements vscode.TreeDataProvider<Node> {
   protected roots: TRoot[] = [];
   private key = '';
   private stale = true;
-  private view: vscode.TreeView<Node> | undefined;
+  private host: ProviderHost | undefined;
   private queue: Promise<void> = Promise.resolve();
   /** The queued reload that hasn't started yet; later requests join it, as it will see their changes. */
   private pending: { force: boolean; done: Promise<void> } | undefined;
@@ -24,14 +31,24 @@ export abstract class BaseProvider<TRoot extends Node> implements vscode.TreeDat
     private readonly output: vscode.LogOutputChannel,
   ) {}
 
-  attach(view: vscode.TreeView<Node>): vscode.Disposable {
-    this.view = view;
+  attach(host: ProviderHost): vscode.Disposable {
+    this.host = host;
     return vscode.Disposable.from(
       this.emitter,
-      view.onDidChangeVisibility((e) => {
-        if (e.visible && this.stale) void this.reload(true);
+      host.onDidChangeVisibility((visible) => {
+        if (visible && this.stale) void this.reload(true);
       }),
     );
+  }
+
+  /** The roots from the last load. */
+  get items(): readonly TRoot[] {
+    return this.roots;
+  }
+
+  /** Text shown next to the list's title, e.g. an active filter. */
+  get summary(): string | undefined {
+    return this.description();
   }
 
   reload(force = false): Promise<void> {
@@ -51,19 +68,18 @@ export abstract class BaseProvider<TRoot extends Node> implements vscode.TreeDat
     return pending.done;
   }
 
-  /** Needed for TreeView.reveal. Only root items are revealed, so children report no parent. */
+  /** Needed for TreeView-style reveal. Only root items are revealed, so children report no parent. */
   getParent(): Node | undefined {
     return undefined;
   }
 
   /** Re-render existing items without reloading data. */
   redraw(): void {
-    if (this.view) this.view.description = this.description();
     this.emitter.fire();
   }
 
   private async doReload(force: boolean): Promise<void> {
-    if (this.view && !this.view.visible) {
+    if (this.host && !this.host.visible) {
       this.stale = true;
       return;
     }
@@ -74,11 +90,10 @@ export abstract class BaseProvider<TRoot extends Node> implements vscode.TreeDat
     if (!force && key === this.key) return;
     this.roots = roots;
     this.key = key;
-    if (this.view) this.view.description = this.description();
     this.emitter.fire();
   }
 
-  /** Text shown next to the view title, e.g. an active filter. */
+  /** Text shown next to the list's title, e.g. an active filter. */
   protected description(): string | undefined {
     return undefined;
   }

@@ -1,0 +1,242 @@
+/* The SlothGit tab. VS Code's look (theme colours, fonts, codicons), lazygit's layout. */
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; padding: 0; overflow: hidden; }
+body {
+  color: var(--vscode-foreground); background: var(--vscode-editor-background);
+  font-family: var(--vscode-font-family); font-size: var(--vscode-font-size);
+  --row: 22px;
+  --border: var(--vscode-slothgit-panelBorder, var(--vscode-panel-border));
+  --mono: var(--vscode-editor-font-family);
+  --dim: var(--vscode-descriptionForeground);
+}
+button { font: inherit; color: inherit; }
+.hidden { display: none !important; }
+
+#app { display: flex; height: 100%; }
+.column { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+#left { flex: 0 0 var(--left-width, 40%); padding: 6px 0 6px 6px; gap: 6px; }
+#right { flex: 1 1 auto; padding: 6px 6px 6px 0; gap: 0; }
+
+/* --- sashes --- */
+.sash { flex: none; background: transparent; transition: background 0.1s 0.2s; }
+.sash.vertical { width: 6px; cursor: ew-resize; }
+.sash.horizontal { height: 6px; cursor: ns-resize; }
+.sash:hover, .sash.dragging { background: var(--vscode-sash-hoverBorder, var(--vscode-focusBorder)); }
+
+/* --- panels --- */
+.panel {
+  display: flex; flex-direction: column; min-height: 0; overflow: hidden;
+  border: 1px solid var(--border); border-radius: 4px;
+  background: var(--vscode-slothgit-panelBackground, var(--vscode-sideBar-background));
+}
+.panel.focused { border-color: var(--vscode-focusBorder); }
+.panel > header {
+  flex: none; display: flex; align-items: center; gap: 2px; height: 28px; padding: 0 4px 0 8px;
+  border-bottom: 1px solid var(--border); white-space: nowrap; overflow: hidden;
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em;
+}
+.panel > header .title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
+.panel > header .count { color: var(--dim); margin-left: 4px; text-transform: none; letter-spacing: 0; }
+.panel > header .description { color: var(--dim); margin-left: 6px; overflow: hidden; text-overflow: ellipsis; text-transform: none; letter-spacing: 0; }
+.panel > header .spacer { flex: 1 1 auto; }
+.panel > .body { flex: 1 1 auto; overflow: auto; min-height: 0; }
+
+/* The panels share the left column; the one in use gets most of the room, as in lazygit. */
+#left > .panel.list-panel { flex: 1 1 0; min-height: 84px; transition: flex-grow 0.15s ease-out; }
+#left > .panel.list-panel.focused { flex-grow: 2.6; }
+#left > .panel[data-panel="stash"]:not(.focused) { flex-grow: 0.55; }
+#left > .panel.status { flex: none; }
+/* The Files panel also holds the commit box: keep a few rows of files visible above it. */
+#left > .panel[data-panel="files"] { min-height: 170px; }
+
+/* Tabs in a panel header (Local · Remotes · Tags…). */
+.tabs { display: flex; gap: 2px; overflow: hidden; }
+.tab {
+  border: none; background: none; padding: 2px 6px; border-radius: 3px; cursor: pointer;
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--dim);
+}
+.tab:hover { color: var(--vscode-foreground); background: var(--vscode-toolbar-hoverBackground); }
+.tab.active { color: var(--vscode-foreground); font-weight: 600; box-shadow: inset 0 -2px 0 var(--vscode-focusBorder); border-radius: 3px 3px 0 0; }
+.tab .count { margin-left: 4px; font-weight: 400; }
+
+.icon-button {
+  flex: none; display: inline-grid; place-items: center; width: 22px; height: 22px; padding: 0;
+  border: none; border-radius: 4px; background: none; cursor: pointer; color: var(--vscode-icon-foreground, var(--vscode-foreground));
+}
+.icon-button:hover { background: var(--vscode-toolbar-hoverBackground); }
+.icon-button:disabled { opacity: 0.4; cursor: default; }
+.text-button {
+  display: inline-flex; align-items: center; gap: 4px; padding: 2px 6px; border: none; border-radius: 4px;
+  background: none; cursor: pointer; color: var(--vscode-textLink-foreground); text-transform: none; letter-spacing: 0; font-size: 12px;
+}
+.text-button:hover { background: var(--vscode-toolbar-hoverBackground); }
+
+/* --- rows --- */
+.list { outline: none; padding: 2px 0; }
+.row {
+  position: relative; display: flex; align-items: center; gap: 6px; height: var(--row); padding: 0 6px 0 8px;
+  white-space: nowrap; cursor: default; user-select: none;
+}
+.row:hover { background: var(--vscode-list-hoverBackground); }
+.row.selected { background: var(--vscode-list-inactiveSelectionBackground); color: var(--vscode-list-inactiveSelectionForeground, inherit); }
+.panel.focused .row.selected { background: var(--vscode-list-activeSelectionBackground); color: var(--vscode-list-activeSelectionForeground); }
+.row.dim > :not(.row-actions) { opacity: 0.6; }
+.row.child { padding-left: 26px; }
+.row > .codicon { flex: none; width: 16px; text-align: center; }
+.twistie { flex: none; width: 14px; margin-right: -4px; cursor: pointer; opacity: 0.8; }
+.label { flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; }
+.label mark { background: none; color: inherit; font-weight: 700; }
+.desc { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--dim); font-size: 0.92em; }
+.row.selected .desc { color: inherit; opacity: 0.85; }
+.empty { padding: 8px 12px; color: var(--dim); font-style: italic; }
+
+/* Commit rows: SHA, initials, subject, refs, then the date on the right. */
+.sha { flex: none; font-family: var(--mono); font-size: 0.92em; color: var(--dim); }
+.people { flex: none; font-size: 0.85em; font-weight: 600; color: var(--dim); min-width: 18px; }
+/* Long rows: the subject gives way first (down to a few words), then the branch and tag labels. */
+.subject { flex: 0 1000 auto; min-width: 80px; overflow: hidden; text-overflow: ellipsis; }
+.date { flex: none; margin-left: auto; color: var(--dim); font-size: 0.85em; padding-left: 8px; }
+.row.head .subject { font-weight: 600; }
+.pills { display: inline-flex; gap: 3px; flex: 0 1 auto; min-width: 0; overflow: hidden; }
+.pill {
+  flex: 0 1 auto; min-width: 4em; padding: 0 5px; border-radius: 8px; font-size: 10.5px; line-height: 15px;
+  border: 1px solid currentColor; max-width: 320px; overflow: hidden; text-overflow: ellipsis;
+}
+.pill.head { color: var(--vscode-slothgit-headRefForeground, var(--vscode-editor-background)); background: var(--vscode-slothgit-headRefBackground, var(--vscode-charts-green)); border-color: var(--vscode-slothgit-headRefBackground, var(--vscode-charts-green)); font-weight: 600; }
+.pill.local { color: var(--vscode-slothgit-localRefForeground, var(--vscode-charts-green)); }
+.pill.remote { color: var(--vscode-slothgit-remoteRefForeground, var(--vscode-charts-blue)); }
+.pill.tag { color: var(--vscode-slothgit-tagRefForeground, var(--vscode-charts-yellow)); }
+
+/* git's status letters in the Files panel: staged, unstaged, untracked and conflicts each in a slothgit.* theme colour. */
+.status-letters { flex: none; font-family: var(--mono); font-size: 0.92em; width: 2.2ch; white-space: pre; font-weight: 600; }
+.status-letters .x { color: var(--vscode-slothgit-stagedForeground, var(--vscode-gitDecoration-addedResourceForeground)); }
+.status-letters .y { color: var(--vscode-slothgit-unstagedForeground, var(--vscode-gitDecoration-modifiedResourceForeground)); }
+.status-letters .y.untracked { color: var(--vscode-slothgit-untrackedForeground, var(--vscode-gitDecoration-untrackedResourceForeground)); }
+.status-letters.conflict .x, .status-letters.conflict .y { color: var(--vscode-slothgit-conflictForeground, var(--vscode-gitDecoration-conflictingResourceForeground)); }
+.file-status { flex: none; font-family: var(--mono); font-weight: 600; width: 1.4ch; }
+.st-A, .st-U { color: var(--vscode-gitDecoration-addedResourceForeground); }
+.st-D { color: var(--vscode-gitDecoration-deletedResourceForeground); }
+.st-M, .st-T { color: var(--vscode-gitDecoration-modifiedResourceForeground); }
+.st-R, .st-C { color: var(--vscode-gitDecoration-renamedResourceForeground); }
+
+/* Buttons on a row while the mouse is over it (or it is selected). */
+.row-actions { display: none; flex: none; margin-left: auto; gap: 1px; }
+.row:hover .row-actions, .row.selected .row-actions { display: flex; }
+.row:hover .date, .row.selected .date { display: none; }
+.row-actions .icon-button { width: 20px; height: 20px; color: inherit; }
+
+/* --- status panel --- */
+.status-body { padding: 6px 8px 8px; display: flex; flex-direction: column; gap: 6px; }
+.where { display: flex; align-items: center; gap: 6px; white-space: nowrap; overflow: hidden; }
+.where .codicon { flex: none; }
+.where .repo { font-weight: 600; }
+.where .branch { font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
+.where .upstream { color: var(--dim); overflow: hidden; text-overflow: ellipsis; }
+.where .upstream.warn { color: var(--vscode-editorWarning-foreground); }
+.where .counts { flex: none; font-family: var(--mono); font-size: 0.92em; }
+.sync { display: flex; gap: 6px; flex-wrap: wrap; }
+.split { display: inline-flex; border-radius: 2px; overflow: hidden; }
+.split > button, .button {
+  display: inline-flex; align-items: center; gap: 4px; padding: 3px 9px; border: none; cursor: pointer; white-space: nowrap;
+  color: var(--vscode-button-secondaryForeground); background: var(--vscode-button-secondaryBackground);
+}
+.split > button:hover, .button:hover { background: var(--vscode-button-secondaryHoverBackground); }
+.split > button:disabled, .button:disabled { opacity: 0.5; cursor: default; }
+.split > .more { padding: 3px 4px; border-left: 1px solid var(--vscode-button-separator, rgba(128, 128, 128, 0.3)); }
+.split.primary > button, .button.primary { color: var(--vscode-button-foreground); background: var(--vscode-button-background); }
+.split.primary > button:hover, .button.primary:hover { background: var(--vscode-button-hoverBackground); }
+.banner {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 4px 6px; border-radius: 3px;
+  background: var(--vscode-inputValidation-warningBackground, rgba(204, 167, 0, 0.15));
+  border: 1px solid var(--vscode-inputValidation-warningBorder, var(--vscode-editorWarning-foreground));
+}
+.banner .text { flex: 1 1 auto; font-weight: 600; }
+
+/* --- commit box --- */
+.commit-box { flex: none; display: flex; flex-direction: column; gap: 4px; padding: 6px 8px 8px; border-top: 1px solid var(--border); }
+.commit-box textarea {
+  width: 100%; min-height: 28px; max-height: 140px; resize: none; padding: 4px 6px; font: inherit;
+  color: var(--vscode-input-foreground); background: var(--vscode-input-background);
+  border: 1px solid var(--vscode-input-border, transparent); border-radius: 2px; outline: none;
+}
+.commit-box textarea:focus { border-color: var(--vscode-focusBorder); }
+.commit-box .row-buttons { display: flex; align-items: center; gap: 8px; }
+.commit-box .row-buttons .button { flex: 1 1 auto; justify-content: center; }
+.commit-box label { display: flex; align-items: center; gap: 4px; cursor: pointer; user-select: none; color: var(--dim); white-space: nowrap; }
+
+/* --- detail pane --- */
+#right > .panel.detail { flex: 1 1 auto; }
+#right > .panel.log { flex: 0 0 var(--log-height, 150px); min-height: 60px; }
+.detail > header { text-transform: none; letter-spacing: 0; font-size: 12px; }
+.detail .body { padding: 10px 14px 20px; }
+.detail .empty-detail { color: var(--dim); padding: 30px 10px; text-align: center; line-height: 1.6; }
+.block + .block { margin-top: 12px; }
+.message h2 { margin: 0; font-size: 1.15em; font-weight: 600; line-height: 1.35; overflow-wrap: anywhere; }
+.message pre { margin: 6px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; font-family: inherit; line-height: 1.45; }
+.meta { display: grid; grid-template-columns: max-content 1fr; gap: 2px 12px; font-size: 0.95em; }
+.meta dt { color: var(--dim); }
+.meta dd { margin: 0; overflow-wrap: anywhere; user-select: text; }
+.block-title { margin: 0 0 4px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--dim); font-weight: 600; }
+.block .list { border: 1px solid var(--border); border-radius: 3px; }
+.text-block { color: var(--dim); line-height: 1.5; }
+
+/* Diffs */
+.diff-file { border: 1px solid var(--border); border-radius: 3px; overflow: hidden; }
+.diff-file + .diff-file { margin-top: 8px; }
+.diff-file > .file-header {
+  display: flex; align-items: center; gap: 8px; height: 26px; padding: 0 6px 0 8px; cursor: pointer;
+  background: var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-sideBarSectionHeader-background)); white-space: nowrap;
+  position: sticky; top: -10px; z-index: 1;
+}
+.file-header .path { overflow: hidden; text-overflow: ellipsis; font-weight: 600; }
+.file-header .stats { font-family: var(--mono); font-size: 0.9em; }
+.file-header .stats .added { color: var(--vscode-gitDecoration-addedResourceForeground); }
+.file-header .stats .removed { color: var(--vscode-gitDecoration-deletedResourceForeground); }
+.file-header .spacer { flex: 1 1 auto; }
+.diff-file.collapsed .hunks { display: none; }
+.hunks { font-family: var(--mono); font-size: var(--vscode-editor-font-size, 12px); line-height: 1.45; overflow-x: auto; }
+.hunk-header { padding: 2px 8px; color: var(--dim); background: var(--vscode-diffEditor-unchangedRegionBackground, rgba(128, 128, 128, 0.08)); white-space: pre; }
+.line { display: grid; grid-template-columns: 4.5ch 4.5ch 1fr; white-space: pre; min-width: max-content; }
+.line .no { padding-right: 6px; text-align: right; color: var(--vscode-editorLineNumber-foreground); user-select: none; }
+.line .text { padding-left: 4px; padding-right: 12px; user-select: text; }
+.line.add { background: var(--vscode-diffEditor-insertedLineBackground, rgba(155, 185, 85, 0.2)); }
+.line.del { background: var(--vscode-diffEditor-removedLineBackground, rgba(255, 0, 0, 0.2)); }
+.line.note .text { color: var(--dim); font-style: italic; }
+.diff-note { padding: 6px 8px; color: var(--dim); font-style: italic; }
+.diff-more { margin-top: 8px; display: flex; align-items: center; gap: 8px; color: var(--dim); }
+
+/* --- command log --- */
+.log .body { padding: 4px 0; font-size: 12px; }
+.log-entry { padding: 3px 10px; }
+.log-entry .head { display: flex; align-items: center; gap: 6px; }
+.log-entry .head .time { color: var(--dim); font-family: var(--mono); font-size: 0.92em; }
+.log-entry .head .title { font-weight: 600; }
+.log-entry .cmd { font-family: var(--mono); color: var(--vscode-textPreformat-foreground, var(--dim)); padding-left: 22px; white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }
+.log-entry.failed .head .title { color: var(--vscode-errorForeground); }
+.log-entry .codicon-check { color: var(--vscode-charts-green); }
+.log-entry .codicon-error { color: var(--vscode-errorForeground); }
+@keyframes spin { to { transform: rotate(360deg); } }
+.codicon-loading { animation: spin 1.2s linear infinite; }
+
+/* --- progress bar while an action runs --- */
+.progress { position: fixed; top: 0; left: 0; right: 0; height: 2px; z-index: 10; overflow: hidden; visibility: hidden; }
+.progress.active { visibility: visible; }
+.progress::after {
+  content: ''; position: absolute; top: 0; height: 100%; width: 30%; left: -30%;
+  background: var(--vscode-progressBar-background); animation: slide 1.2s ease-in-out infinite;
+}
+@keyframes slide { to { left: 100%; } }
+
+/* --- the ⋯ menu --- */
+.menu {
+  position: fixed; z-index: 20; min-width: 200px; max-width: 360px; padding: 4px 0;
+  color: var(--vscode-menu-foreground); background: var(--vscode-menu-background);
+  border: 1px solid var(--vscode-menu-border, var(--border)); border-radius: 5px;
+  box-shadow: 0 2px 8px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.36));
+}
+.menu button {
+  display: flex; align-items: center; gap: 8px; width: 100%; padding: 4px 12px; border: none; background: none;
+  text-align: left; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.menu button:hover, .menu button:focus { color: var(--vscode-menu-selectionForeground); background: var(--vscode-menu-selectionBackground); outline: none; }
+.menu .codicon { width: 16px; }

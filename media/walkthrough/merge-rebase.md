@@ -12,7 +12,7 @@ Both bring the work from one branch into another. They differ in what the histor
 
 **Use merge** to bring a finished feature into `main`, or whenever others already have your commits.
 
-In the **Branches** view: check out the branch that should receive the work, then right-click the other branch → **Merge into Current Branch**.
+In the **Branches** panel: check out the branch that should receive the work, then right-click the other branch → **Merge into Current Branch**.
 
 ## Rebase
 
@@ -23,13 +23,13 @@ In the **Branches** view: check out the branch that should receive the work, the
 
 **Use rebase** to update *your own* feature branch with the latest `main` before you share it.
 
-In the **Branches** view: check out your feature branch, then right-click `main` → **Rebase Current Branch onto This**.
+In the **Branches** panel: check out your feature branch, then right-click `main` → **Rebase Current Branch onto This**.
 
 Remember: rebase moves the branch you're **on**. It never adds anything to the branch you right-clicked.
 
 ## Interactive rebase
 
-**Interactive Rebase** is a rebase that pauses before it starts, showing every commit it's about to replay as a list of steps at the top of the **Commits** view. Before you press **Continue**, you can:
+**Interactive Rebase** is a rebase that pauses before it starts, showing every commit it's about to replay as a list of steps at the top of the **Commits** panel. Before you press **Continue**, you can:
 
 - reorder the steps,
 - **squash** or **fixup** commits together,

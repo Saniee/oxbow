@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { setContext } from '../contextKeys';
 import { addToSelection, WHOLE_FILE, type LineRange, type Selection, type Side } from '../git/patch';
 import type { CommitNode, FileNode } from './nodes';
 
@@ -52,7 +53,7 @@ export class CustomPatch implements vscode.Disposable {
 
   private changed(): void {
     const count = this.files.size;
-    void vscode.commands.executeCommand('setContext', 'slothgit.hasPatch', count > 0);
+    setContext('slothgit.hasPatch', count > 0);
     if (count && this.source) {
       this.status.text = `$(diff) Patch: ${count} file${count === 1 ? '' : 's'} from ${this.source.shortSha}`;
       this.status.show();

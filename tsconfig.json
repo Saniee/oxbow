@@ -16,5 +16,5 @@
   },
   "include": ["src", "test"],
   // Browser code, checked by src/webview/tsconfig.json.
-  "exclude": ["src/webview/graph", "src/webview/sync", "src/webview/vscode.d.ts"]
+  "exclude": ["src/webview/graph", "src/webview/tab", "src/webview/vscode.d.ts"]
 }

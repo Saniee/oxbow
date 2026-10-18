@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { setContext } from '../contextKeys';
 import {
   getBisectState,
   getCommitFiles,
@@ -123,10 +124,10 @@ export class CommitsProvider extends BaseProvider<CommitNode | TodoNode> {
   protected async load(git: Git): Promise<(CommitNode | TodoNode)[]> {
     const [bisect, operation] = await Promise.all([getBisectState(git), getOperation(git)]);
     this.bisect = bisect;
-    void vscode.commands.executeCommand('setContext', 'slothgit.bisecting', !!bisect);
-    void vscode.commands.executeCommand('setContext', 'slothgit.commitsFiltered', !!this.filterPath);
-    void vscode.commands.executeCommand('setContext', 'slothgit.commitsSearching', !!this.search);
-    void vscode.commands.executeCommand('setContext', 'slothgit.commitsAllBranches', this.allBranches);
+    setContext('slothgit.bisecting', !!bisect);
+    setContext('slothgit.commitsFiltered', !!this.filterPath);
+    setContext('slothgit.commitsSearching', !!this.search);
+    setContext('slothgit.commitsAllBranches', this.allBranches);
 
     // While bisecting HEAD jumps around; keep showing the branch the bisect started from.
     const ref = bisect ? bisect.start : 'HEAD';
@@ -193,16 +194,16 @@ export class CommitsProvider extends BaseProvider<CommitNode | TodoNode> {
       item.iconPath = new vscode.ThemeIcon(bisect.icon, new vscode.ThemeColor(bisect.color));
       item.description = `${bisect.label} · ${item.description}`;
     } else if (isBase) {
-      item.iconPath = new vscode.ThemeIcon('debug-breakpoint', new vscode.ThemeColor('charts.purple'));
+      item.iconPath = new vscode.ThemeIcon('debug-breakpoint', new vscode.ThemeColor('slothgit.rebaseBaseIcon'));
       item.description = `base · ${item.description}`;
     } else if (copied) {
-      item.iconPath = new vscode.ThemeIcon('clippy', new vscode.ThemeColor('charts.blue'));
+      item.iconPath = new vscode.ThemeIcon('clippy', new vscode.ThemeColor('slothgit.cherryPickedIcon'));
     } else if (node.onHead === false) {
       // Another branch's commit (all-branches mode): not part of this branch's push state.
-      item.iconPath = new vscode.ThemeIcon(merge ? 'git-merge' : 'git-commit', new vscode.ThemeColor('disabledForeground'));
+      item.iconPath = new vscode.ThemeIcon(merge ? 'git-merge' : 'git-commit', new vscode.ThemeColor('slothgit.commitOtherBranchIcon'));
     } else {
       // As in lazygit: green when on a main branch, yellow when pushed, red when not pushed yet.
-      const color = merged ? 'charts.green' : pushed ? 'charts.yellow' : this.unpushed !== null ? 'charts.red' : undefined;
+      const color = merged ? 'slothgit.commitMergedIcon' : pushed ? 'slothgit.commitPushedIcon' : this.unpushed !== null ? 'slothgit.commitUnpushedIcon' : undefined;
       item.iconPath = new vscode.ThemeIcon(merge ? 'git-merge' : 'git-commit', color && new vscode.ThemeColor(color));
     }
 
@@ -237,10 +238,10 @@ export class CommitsProvider extends BaseProvider<CommitNode | TodoNode> {
   private bisectMark(sha: string): { label: string; icon: string; color: string } | undefined {
     const b = this.bisect;
     if (!b) return undefined;
-    if (sha === b.bad) return { label: b.terms.bad, icon: 'bug', color: 'charts.red' };
-    if (b.good.includes(sha)) return { label: b.terms.good, icon: 'pass', color: 'charts.green' };
-    if (b.skipped.includes(sha)) return { label: 'skipped', icon: 'debug-step-over', color: 'disabledForeground' };
-    if (sha === this.head) return { label: 'testing', icon: 'arrow-right', color: 'charts.yellow' };
+    if (sha === b.bad) return { label: b.terms.bad, icon: 'bug', color: 'slothgit.bisectBadIcon' };
+    if (b.good.includes(sha)) return { label: b.terms.good, icon: 'pass', color: 'slothgit.bisectGoodIcon' };
+    if (b.skipped.includes(sha)) return { label: 'skipped', icon: 'debug-step-over', color: 'slothgit.bisectSkippedIcon' };
+    if (sha === this.head) return { label: 'testing', icon: 'arrow-right', color: 'slothgit.bisectTestingIcon' };
     return undefined;
   }
 
@@ -256,7 +257,7 @@ export class CommitsProvider extends BaseProvider<CommitNode | TodoNode> {
       item.id = `todo:${node.ref}`;
       item.description = 'stacked branch';
       item.tooltip = `Pending rebase step: ${node.subject} to the commit above it`;
-      item.iconPath = new vscode.ThemeIcon(TODO_ICONS[node.action], new vscode.ThemeColor('charts.orange'));
+      item.iconPath = new vscode.ThemeIcon(TODO_ICONS[node.action], new vscode.ThemeColor('slothgit.rebaseTodoIcon'));
       item.contextValue = 'todo:update-ref';
       return item;
     }
@@ -270,7 +271,7 @@ export class CommitsProvider extends BaseProvider<CommitNode | TodoNode> {
     tooltip.appendMarkdown(`Pending rebase step: **${node.action}**. ${TODO_MEANINGS[node.action]}`);
     if (node.action !== 'merge') tooltip.appendMarkdown('\n\nRight-click to change it. Steps run from the bottom up.');
     item.tooltip = tooltip;
-    const color = node.action === 'drop' ? 'disabledForeground' : 'charts.orange';
+    const color = node.action === 'drop' ? 'disabledForeground' : 'slothgit.rebaseTodoIcon';
     item.iconPath = new vscode.ThemeIcon(TODO_ICONS[node.action], new vscode.ThemeColor(color));
     // Merge steps recreate a merge commit and can't be changed or moved. The action and position let the
     // menu hide what doesn't apply: the current action, and squash/fixup on the first step when nothing has

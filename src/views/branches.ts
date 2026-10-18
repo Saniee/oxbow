@@ -181,10 +181,10 @@ function refItem(node: RefNode): vscode.TreeItem {
     item.description = [status.join(' '), b.upstream?.name, b.relDate].filter(Boolean).join(' · ');
     if (b.worktreePath) item.description = `worktree · ${item.description}`;
     item.iconPath = b.current
-      ? new vscode.ThemeIcon('check', new vscode.ThemeColor('charts.green'))
+      ? new vscode.ThemeIcon('check', new vscode.ThemeColor('slothgit.currentBranchIcon'))
       : b.worktreePath
-        ? new vscode.ThemeIcon('repo', new vscode.ThemeColor('charts.blue'))
-        : new vscode.ThemeIcon('git-branch', b.gone ? new vscode.ThemeColor('disabledForeground') : undefined);
+        ? new vscode.ThemeIcon('repo', new vscode.ThemeColor('slothgit.worktreeBranchIcon'))
+        : new vscode.ThemeIcon('git-branch', b.gone ? new vscode.ThemeColor('slothgit.goneIcon') : undefined);
     tooltip.appendMarkdown(`**${b.name}**${b.current ? ' (current)' : ''}\n\n`);
     tooltip.appendMarkdown(
       b.upstream
@@ -228,7 +228,7 @@ function commitItem(node: CommitNode, copied: boolean): vscode.TreeItem {
   item.tooltip = [node.sha, `${node.author}, ${node.relDate}`, ...coAuthorLines(node), '', node.subject].join('\n');
   // Copied for cherry-pick: marked as in the Commits view, since the copy is usually made from another branch.
   item.iconPath = copied
-    ? new vscode.ThemeIcon('clippy', new vscode.ThemeColor('charts.blue'))
+    ? new vscode.ThemeIcon('clippy', new vscode.ThemeColor('slothgit.cherryPickedIcon'))
     : new vscode.ThemeIcon('git-commit');
   if (copied) {
     item.tooltip += '\n\nCopied for cherry-pick';
@@ -248,8 +248,8 @@ function worktreeItem(node: WorktreeNode): vscode.TreeItem {
     .join(' · ');
   item.tooltip = `${w.path}\n${what}`;
   item.iconPath = w.current
-    ? new vscode.ThemeIcon('check', new vscode.ThemeColor('charts.green'))
-    : new vscode.ThemeIcon('repo', w.prunable ? new vscode.ThemeColor('disabledForeground') : undefined);
+    ? new vscode.ThemeIcon('check', new vscode.ThemeColor('slothgit.currentBranchIcon'))
+    : new vscode.ThemeIcon('repo', w.prunable ? new vscode.ThemeColor('slothgit.goneIcon') : undefined);
   const flags = [w.main && 'main', w.current && 'current', w.prunable && 'prunable'].filter(Boolean);
   item.contextValue = ['worktree', ...flags].join(':');
   return item;

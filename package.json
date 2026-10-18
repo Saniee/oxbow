@@ -2,7 +2,7 @@
   "name": "slothgit",
   "displayName": "SlothGit",
   "description": "Lazygit-inspired power tools for VS Code's built-in Git: rewrite history from a commit list, amend older commits, manage stashes, browse the reflog.",
-  "version": "1.0.1",
+  "version": "2.0.0",
   "publisher": "Saniee",
   "license": "GPL-3.0-only",
   "icon": "media/icon.png",
@@ -28,7 +28,8 @@
     "vscode.git"
   ],
   "activationEvents": [
-    "onStartupFinished"
+    "onStartupFinished",
+    "onWebviewPanel:slothgit.tab"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -39,13 +40,13 @@
           "type": "number",
           "default": 300,
           "minimum": 10,
-          "description": "Maximum number of commits shown in the Commits view."
+          "description": "Maximum number of commits shown in the Commits list."
         },
         "slothgit.reflogLimit": {
           "type": "number",
           "default": 200,
           "minimum": 10,
-          "description": "Maximum number of entries shown in the Reflog view."
+          "description": "Maximum number of entries shown in the Reflog list."
         },
         "slothgit.confirmRewritingPushedCommits": {
           "type": "boolean",
@@ -91,63 +92,360 @@
             "Alphabetical"
           ],
           "default": "recency",
-          "description": "Order of local branches in the Branches view. The current branch is always first."
+          "description": "Order of local branches in the Branches panel. The current branch is always first."
         },
         "slothgit.simpleMode": {
           "type": "boolean",
           "default": false,
-          "markdownDescription": "Hide advanced actions (bisect, custom patches, worktrees, compare, resets, upstream settings, the Reflog view and more) from the menus. They stay available in the Command Palette. Toggle it with the button on the Source Control **Changes** title bar or in any SlothGit view's **…** menu."
+          "markdownDescription": "Hide advanced actions (bisect, custom patches, worktrees, compare, resets, upstream settings, the Reflog and more) from the menus and buttons. They stay available in the Command Palette. Toggle it in the SlothGit tab's Status panel **…** menu."
         }
       }
     },
     "views": {
-      "scm": [
+      "slothgit": [
         {
-          "type": "webview",
-          "id": "slothgit.sync",
-          "name": "Sync",
-          "icon": "$(sync)",
-          "when": "slothgit.hasRepository"
-        },
-        {
-          "id": "slothgit.branches",
-          "name": "Branches",
-          "icon": "$(git-branch)"
-        },
-        {
-          "id": "slothgit.commits",
-          "name": "Commits",
-          "icon": "$(git-commit)"
-        },
-        {
-          "id": "slothgit.reflog",
-          "name": "Reflog",
-          "icon": "$(history)",
-          "visibility": "collapsed",
-          "when": "!config.slothgit.simpleMode"
-        },
-        {
-          "id": "slothgit.stashes",
-          "name": "Stashes",
-          "icon": "$(archive)"
+          "id": "slothgit.launcher",
+          "name": "SlothGit",
+          "icon": "media/icon-mono.svg"
         }
       ]
     },
     "viewsWelcome": [
       {
-        "view": "slothgit.commits",
-        "contents": "No Git repository is open.",
-        "when": "!slothgit.hasRepository"
+        "view": "slothgit.launcher",
+        "contents": "SlothGit opens in a tab of its own: your files, branches, commits and stashes side by side, with the selected one's changes next to them.\n[Open SlothGit](command:slothgit.open)\nRight-click anything in the tab for what you can do with it.\n[Get Started](command:slothgit.learn)"
+      }
+    ],
+    "colors": [
+      {
+        "id": "slothgit.panelBackground",
+        "description": "Background of the panels in the SlothGit tab.",
+        "defaults": {
+          "dark": "sideBar.background",
+          "light": "sideBar.background",
+          "highContrast": "sideBar.background",
+          "highContrastLight": "sideBar.background"
+        }
       },
       {
-        "view": "slothgit.stashes",
-        "contents": "No stashes.\n[Stash All Changes](command:slothgit.stash.push)",
-        "when": "slothgit.hasRepository"
+        "id": "slothgit.panelBorder",
+        "description": "Border of the panels in the SlothGit tab.",
+        "defaults": {
+          "dark": "panel.border",
+          "light": "panel.border",
+          "highContrast": "panel.border",
+          "highContrastLight": "panel.border"
+        }
       },
       {
-        "view": "slothgit.branches",
-        "contents": "No Git repository is open.",
-        "when": "!slothgit.hasRepository"
+        "id": "slothgit.commitMergedIcon",
+        "description": "Icon of a commit that is on a main branch.",
+        "defaults": {
+          "dark": "charts.green",
+          "light": "charts.green",
+          "highContrast": "charts.green",
+          "highContrastLight": "charts.green"
+        }
+      },
+      {
+        "id": "slothgit.commitPushedIcon",
+        "description": "Icon of a commit that is pushed but not on a main branch.",
+        "defaults": {
+          "dark": "charts.yellow",
+          "light": "charts.yellow",
+          "highContrast": "charts.yellow",
+          "highContrastLight": "charts.yellow"
+        }
+      },
+      {
+        "id": "slothgit.commitUnpushedIcon",
+        "description": "Icon of a commit that is not pushed yet.",
+        "defaults": {
+          "dark": "charts.red",
+          "light": "charts.red",
+          "highContrast": "charts.red",
+          "highContrastLight": "charts.red"
+        }
+      },
+      {
+        "id": "slothgit.commitOtherBranchIcon",
+        "description": "Icon of another branch's commit, when showing all branches.",
+        "defaults": {
+          "dark": "disabledForeground",
+          "light": "disabledForeground",
+          "highContrast": "disabledForeground",
+          "highContrastLight": "disabledForeground"
+        }
+      },
+      {
+        "id": "slothgit.cherryPickedIcon",
+        "description": "Icon of a commit copied for cherry-pick.",
+        "defaults": {
+          "dark": "charts.blue",
+          "light": "charts.blue",
+          "highContrast": "charts.blue",
+          "highContrastLight": "charts.blue"
+        }
+      },
+      {
+        "id": "slothgit.rebaseBaseIcon",
+        "description": "Icon of the commit marked as the base for a rebase.",
+        "defaults": {
+          "dark": "charts.purple",
+          "light": "charts.purple",
+          "highContrast": "charts.purple",
+          "highContrastLight": "charts.purple"
+        }
+      },
+      {
+        "id": "slothgit.rebaseTodoIcon",
+        "description": "Icon of a pending rebase step.",
+        "defaults": {
+          "dark": "charts.orange",
+          "light": "charts.orange",
+          "highContrast": "charts.orange",
+          "highContrastLight": "charts.orange"
+        }
+      },
+      {
+        "id": "slothgit.bisectBadIcon",
+        "description": "Icon of a commit marked bad while bisecting.",
+        "defaults": {
+          "dark": "charts.red",
+          "light": "charts.red",
+          "highContrast": "charts.red",
+          "highContrastLight": "charts.red"
+        }
+      },
+      {
+        "id": "slothgit.bisectGoodIcon",
+        "description": "Icon of a commit marked good while bisecting.",
+        "defaults": {
+          "dark": "charts.green",
+          "light": "charts.green",
+          "highContrast": "charts.green",
+          "highContrastLight": "charts.green"
+        }
+      },
+      {
+        "id": "slothgit.bisectSkippedIcon",
+        "description": "Icon of a commit skipped while bisecting.",
+        "defaults": {
+          "dark": "disabledForeground",
+          "light": "disabledForeground",
+          "highContrast": "disabledForeground",
+          "highContrastLight": "disabledForeground"
+        }
+      },
+      {
+        "id": "slothgit.bisectTestingIcon",
+        "description": "Icon of the commit being tested while bisecting.",
+        "defaults": {
+          "dark": "charts.yellow",
+          "light": "charts.yellow",
+          "highContrast": "charts.yellow",
+          "highContrastLight": "charts.yellow"
+        }
+      },
+      {
+        "id": "slothgit.currentBranchIcon",
+        "description": "Icon of the current branch and worktree.",
+        "defaults": {
+          "dark": "charts.green",
+          "light": "charts.green",
+          "highContrast": "charts.green",
+          "highContrastLight": "charts.green"
+        }
+      },
+      {
+        "id": "slothgit.worktreeBranchIcon",
+        "description": "Icon of a branch checked out in another worktree.",
+        "defaults": {
+          "dark": "charts.blue",
+          "light": "charts.blue",
+          "highContrast": "charts.blue",
+          "highContrastLight": "charts.blue"
+        }
+      },
+      {
+        "id": "slothgit.goneIcon",
+        "description": "Icon of a branch whose upstream is gone, or a worktree that can be pruned.",
+        "defaults": {
+          "dark": "disabledForeground",
+          "light": "disabledForeground",
+          "highContrast": "disabledForeground",
+          "highContrastLight": "disabledForeground"
+        }
+      },
+      {
+        "id": "slothgit.headRefBackground",
+        "description": "Background of the label of the checked-out branch on a commit.",
+        "defaults": {
+          "dark": "charts.green",
+          "light": "charts.green",
+          "highContrast": "charts.green",
+          "highContrastLight": "charts.green"
+        }
+      },
+      {
+        "id": "slothgit.headRefForeground",
+        "description": "Text of the label of the checked-out branch on a commit.",
+        "defaults": {
+          "dark": "editor.background",
+          "light": "editor.background",
+          "highContrast": "editor.background",
+          "highContrastLight": "editor.background"
+        }
+      },
+      {
+        "id": "slothgit.localRefForeground",
+        "description": "Label of a local branch on a commit.",
+        "defaults": {
+          "dark": "charts.green",
+          "light": "charts.green",
+          "highContrast": "charts.green",
+          "highContrastLight": "charts.green"
+        }
+      },
+      {
+        "id": "slothgit.remoteRefForeground",
+        "description": "Label of a remote branch on a commit.",
+        "defaults": {
+          "dark": "charts.blue",
+          "light": "charts.blue",
+          "highContrast": "charts.blue",
+          "highContrastLight": "charts.blue"
+        }
+      },
+      {
+        "id": "slothgit.tagRefForeground",
+        "description": "Label of a tag on a commit.",
+        "defaults": {
+          "dark": "charts.yellow",
+          "light": "charts.yellow",
+          "highContrast": "charts.yellow",
+          "highContrastLight": "charts.yellow"
+        }
+      },
+      {
+        "id": "slothgit.stagedForeground",
+        "description": "A file's staged status letter in the Files panel.",
+        "defaults": {
+          "dark": "gitDecoration.addedResourceForeground",
+          "light": "gitDecoration.addedResourceForeground",
+          "highContrast": "gitDecoration.addedResourceForeground",
+          "highContrastLight": "gitDecoration.addedResourceForeground"
+        }
+      },
+      {
+        "id": "slothgit.unstagedForeground",
+        "description": "A file's unstaged status letter in the Files panel.",
+        "defaults": {
+          "dark": "gitDecoration.modifiedResourceForeground",
+          "light": "gitDecoration.modifiedResourceForeground",
+          "highContrast": "gitDecoration.modifiedResourceForeground",
+          "highContrastLight": "gitDecoration.modifiedResourceForeground"
+        }
+      },
+      {
+        "id": "slothgit.untrackedForeground",
+        "description": "The status letters of an untracked file in the Files panel.",
+        "defaults": {
+          "dark": "gitDecoration.untrackedResourceForeground",
+          "light": "gitDecoration.untrackedResourceForeground",
+          "highContrast": "gitDecoration.untrackedResourceForeground",
+          "highContrastLight": "gitDecoration.untrackedResourceForeground"
+        }
+      },
+      {
+        "id": "slothgit.conflictForeground",
+        "description": "The status letters of a file with conflicts in the Files panel.",
+        "defaults": {
+          "dark": "gitDecoration.conflictingResourceForeground",
+          "light": "gitDecoration.conflictingResourceForeground",
+          "highContrast": "gitDecoration.conflictingResourceForeground",
+          "highContrastLight": "gitDecoration.conflictingResourceForeground"
+        }
+      },
+      {
+        "id": "slothgit.graphLane1",
+        "description": "Colour of the commit graph's lane 1 (and every 8th after it).",
+        "defaults": {
+          "dark": "charts.blue",
+          "light": "charts.blue",
+          "highContrast": "charts.blue",
+          "highContrastLight": "charts.blue"
+        }
+      },
+      {
+        "id": "slothgit.graphLane2",
+        "description": "Colour of the commit graph's lane 2 (and every 8th after it).",
+        "defaults": {
+          "dark": "charts.green",
+          "light": "charts.green",
+          "highContrast": "charts.green",
+          "highContrastLight": "charts.green"
+        }
+      },
+      {
+        "id": "slothgit.graphLane3",
+        "description": "Colour of the commit graph's lane 3 (and every 8th after it).",
+        "defaults": {
+          "dark": "charts.orange",
+          "light": "charts.orange",
+          "highContrast": "charts.orange",
+          "highContrastLight": "charts.orange"
+        }
+      },
+      {
+        "id": "slothgit.graphLane4",
+        "description": "Colour of the commit graph's lane 4 (and every 8th after it).",
+        "defaults": {
+          "dark": "charts.purple",
+          "light": "charts.purple",
+          "highContrast": "charts.purple",
+          "highContrastLight": "charts.purple"
+        }
+      },
+      {
+        "id": "slothgit.graphLane5",
+        "description": "Colour of the commit graph's lane 5 (and every 8th after it).",
+        "defaults": {
+          "dark": "charts.red",
+          "light": "charts.red",
+          "highContrast": "charts.red",
+          "highContrastLight": "charts.red"
+        }
+      },
+      {
+        "id": "slothgit.graphLane6",
+        "description": "Colour of the commit graph's lane 6 (and every 8th after it).",
+        "defaults": {
+          "dark": "charts.yellow",
+          "light": "charts.yellow",
+          "highContrast": "charts.yellow",
+          "highContrastLight": "charts.yellow"
+        }
+      },
+      {
+        "id": "slothgit.graphLane7",
+        "description": "Colour of the commit graph's lane 7 (and every 8th after it).",
+        "defaults": {
+          "dark": "terminal.ansiCyan",
+          "light": "terminal.ansiCyan",
+          "highContrast": "terminal.ansiCyan",
+          "highContrastLight": "terminal.ansiCyan"
+        }
+      },
+      {
+        "id": "slothgit.graphLane8",
+        "description": "Colour of the commit graph's lane 8 (and every 8th after it).",
+        "defaults": {
+          "dark": "terminal.ansiMagenta",
+          "light": "terminal.ansiMagenta",
+          "highContrast": "terminal.ansiMagenta",
+          "highContrastLight": "terminal.ansiMagenta"
+        }
       }
     ],
     "commands": [
@@ -296,7 +594,7 @@
         "command": "slothgit.stash.push",
         "title": "Stash All Changes (Including Untracked)…",
         "category": "SlothGit",
-        "icon": "$(add)"
+        "icon": "$(git-stash)"
       },
       {
         "command": "slothgit.stash.pushStaged",
@@ -312,13 +610,13 @@
         "command": "slothgit.stash.apply",
         "title": "Apply Stash (Keep It)",
         "category": "SlothGit",
-        "icon": "$(check)"
+        "icon": "$(git-stash-apply)"
       },
       {
         "command": "slothgit.stash.pop",
         "title": "Pop Stash (Apply and Delete It)",
         "category": "SlothGit",
-        "icon": "$(arrow-circle-down)"
+        "icon": "$(git-stash-pop)"
       },
       {
         "command": "slothgit.stash.drop",
@@ -836,653 +1134,69 @@
         "title": "Show All Actions (Leave Simple Mode)",
         "category": "SlothGit",
         "icon": "$(eye)"
+      },
+      {
+        "command": "slothgit.open",
+        "title": "Open SlothGit",
+        "category": "SlothGit",
+        "icon": "$(layout)"
+      },
+      {
+        "command": "slothgit.file.stage",
+        "title": "Stage",
+        "category": "SlothGit",
+        "icon": "$(add)"
+      },
+      {
+        "command": "slothgit.file.unstage",
+        "title": "Unstage",
+        "category": "SlothGit",
+        "icon": "$(remove)"
+      },
+      {
+        "command": "slothgit.file.discard",
+        "title": "Discard Changes",
+        "category": "SlothGit",
+        "icon": "$(discard)"
+      },
+      {
+        "command": "slothgit.file.open",
+        "title": "Open File",
+        "category": "SlothGit",
+        "icon": "$(go-to-file)"
+      },
+      {
+        "command": "slothgit.file.openChange",
+        "title": "Open Changes",
+        "category": "SlothGit",
+        "icon": "$(diff)"
+      },
+      {
+        "command": "slothgit.file.openMergeEditor",
+        "title": "Resolve in Merge Editor",
+        "category": "SlothGit",
+        "icon": "$(git-merge)"
+      },
+      {
+        "command": "slothgit.files.stageAll",
+        "title": "Stage All Changes",
+        "category": "SlothGit",
+        "icon": "$(add)"
+      },
+      {
+        "command": "slothgit.files.unstageAll",
+        "title": "Unstage All Changes",
+        "category": "SlothGit",
+        "icon": "$(remove)"
+      },
+      {
+        "command": "slothgit.files.discardAll",
+        "title": "Discard All Changes…",
+        "category": "SlothGit",
+        "icon": "$(discard)"
       }
     ],
     "menus": {
-      "view/title": [
-        {
-          "command": "slothgit.fetchAll",
-          "when": "view == slothgit.branches",
-          "group": "navigation@1"
-        },
-        {
-          "command": "slothgit.branch.create",
-          "when": "view == slothgit.branches",
-          "group": "navigation@2"
-        },
-        {
-          "command": "slothgit.branch.checkoutPrevious",
-          "when": "view == slothgit.branches",
-          "group": "1_branch@1"
-        },
-        {
-          "command": "slothgit.remote.add",
-          "when": "view == slothgit.branches",
-          "group": "1_branch@2"
-        },
-        {
-          "command": "slothgit.tag.create",
-          "when": "view == slothgit.branches",
-          "group": "1_branch@3"
-        },
-        {
-          "command": "slothgit.commit.clearBase",
-          "when": "view == slothgit.commits && slothgit.hasRebaseBase",
-          "group": "navigation@5"
-        },
-        {
-          "command": "slothgit.operation.continue",
-          "when": "view == slothgit.commits && slothgit.operation",
-          "group": "navigation@1"
-        },
-        {
-          "command": "slothgit.operation.abort",
-          "when": "view == slothgit.commits && slothgit.operation",
-          "group": "navigation@2"
-        },
-        {
-          "command": "slothgit.commit.pasteCherryPick",
-          "when": "view == slothgit.commits && slothgit.hasCherryPicks",
-          "group": "navigation@3"
-        },
-        {
-          "command": "slothgit.commit.clearCherryPick",
-          "when": "view == slothgit.commits && slothgit.hasCherryPicks",
-          "group": "navigation@4"
-        },
-        {
-          "command": "slothgit.stash.push",
-          "when": "view == slothgit.stashes",
-          "group": "navigation@1"
-        },
-        {
-          "command": "slothgit.stash.pushStaged",
-          "when": "view == slothgit.stashes",
-          "group": "stash@1"
-        },
-        {
-          "command": "slothgit.stash.pushKeepIndex",
-          "when": "view == slothgit.stashes && !config.slothgit.simpleMode",
-          "group": "stash@2"
-        },
-        {
-          "command": "slothgit.switchRepository",
-          "when": "view =~ /^slothgit\\./ && slothgit.multipleRepos",
-          "group": "navigation@8"
-        },
-        {
-          "command": "slothgit.refresh",
-          "when": "view =~ /^slothgit\\./",
-          "group": "navigation@9"
-        },
-        {
-          "command": "slothgit.undo",
-          "when": "view == slothgit.commits",
-          "group": "navigation@6"
-        },
-        {
-          "command": "slothgit.redo",
-          "when": "view == slothgit.commits",
-          "group": "navigation@7"
-        },
-        {
-          "command": "slothgit.commits.filterByFile",
-          "when": "view == slothgit.commits && !slothgit.commitsFiltered",
-          "group": "1_view@1"
-        },
-        {
-          "command": "slothgit.commits.clearFilter",
-          "when": "view == slothgit.commits && slothgit.commitsFiltered",
-          "group": "navigation@8"
-        },
-        {
-          "command": "slothgit.bisect.reset",
-          "when": "view == slothgit.commits && slothgit.bisecting",
-          "group": "navigation@4"
-        },
-        {
-          "command": "slothgit.compare.clear",
-          "when": "view == slothgit.commits && slothgit.hasCompareBase",
-          "group": "2_compare@1"
-        },
-        {
-          "command": "slothgit.branch.deleteMerged",
-          "when": "view == slothgit.branches",
-          "group": "2_branch@1"
-        },
-        {
-          "command": "slothgit.branch.sort",
-          "when": "view == slothgit.branches",
-          "group": "2_branch@2"
-        },
-        {
-          "command": "slothgit.worktree.add",
-          "when": "view == slothgit.branches && !config.slothgit.simpleMode",
-          "group": "1_branch@4"
-        },
-        {
-          "command": "slothgit.commits.search",
-          "when": "view == slothgit.commits && !slothgit.commitsSearching",
-          "group": "navigation@9"
-        },
-        {
-          "command": "slothgit.commits.clearSearch",
-          "when": "view == slothgit.commits && slothgit.commitsSearching",
-          "group": "navigation@9"
-        },
-        {
-          "command": "slothgit.commits.showAllBranches",
-          "when": "view == slothgit.commits && !slothgit.commitsAllBranches",
-          "group": "1_view@2"
-        },
-        {
-          "command": "slothgit.commits.showCurrentBranch",
-          "when": "view == slothgit.commits && slothgit.commitsAllBranches",
-          "group": "navigation@10"
-        },
-        {
-          "command": "slothgit.graph.open",
-          "when": "view == slothgit.commits",
-          "group": "navigation@11"
-        },
-        {
-          "command": "slothgit.patch.menu",
-          "when": "view == slothgit.commits && slothgit.hasPatch",
-          "group": "navigation@4"
-        },
-        {
-          "command": "slothgit.operation.skip",
-          "when": "view == slothgit.commits && slothgit.operation =~ /^(rebase|cherry-pick|revert)$/",
-          "group": "navigation@1"
-        },
-        {
-          "command": "slothgit.commit.clearCherryPick",
-          "when": "view == slothgit.branches && slothgit.hasCherryPicks",
-          "group": "navigation@0"
-        },
-        {
-          "command": "slothgit.operation.continue",
-          "when": "view == slothgit.branches && slothgit.operation",
-          "group": "navigation@1"
-        },
-        {
-          "command": "slothgit.operation.abort",
-          "when": "view == slothgit.branches && slothgit.operation",
-          "group": "navigation@2"
-        },
-        {
-          "command": "slothgit.learn",
-          "when": "view =~ /^slothgit./",
-          "group": "9_help@1"
-        },
-        {
-          "command": "slothgit.simpleMode.on",
-          "when": "view =~ /^slothgit./ && !config.slothgit.simpleMode",
-          "group": "9_help@0"
-        },
-        {
-          "command": "slothgit.simpleMode.off",
-          "when": "view =~ /^slothgit./ && config.slothgit.simpleMode",
-          "group": "9_help@0"
-        }
-      ],
-      "view/item/context": [
-        {
-          "command": "slothgit.commit.openChanges",
-          "when": "viewItem =~ /^(commit|reflog|refcommit)/",
-          "group": "inline@1"
-        },
-        {
-          "command": "slothgit.commit.moveUp",
-          "when": "view == slothgit.commits && viewItem =~ /^commit(?!.*:(head|other))/ && !config.slothgit.simpleMode",
-          "group": "inline@2"
-        },
-        {
-          "command": "slothgit.commit.moveDown",
-          "when": "view == slothgit.commits && viewItem =~ /^commit(?!.*:(root|other))/ && !config.slothgit.simpleMode",
-          "group": "inline@3"
-        },
-        {
-          "command": "slothgit.commit.squash",
-          "when": "view == slothgit.commits && viewItem =~ /^commit(?!.*:other)/",
-          "group": "1_rebase@2"
-        },
-        {
-          "command": "slothgit.commit.fixup",
-          "when": "view == slothgit.commits && viewItem =~ /^commit(?!.*:other)/",
-          "group": "1_rebase@3"
-        },
-        {
-          "command": "slothgit.commit.drop",
-          "when": "view == slothgit.commits && viewItem =~ /^commit(?!.*:other)/",
-          "group": "1_rebase@4"
-        },
-        {
-          "command": "slothgit.commit.reword",
-          "when": "view == slothgit.commits && viewItem =~ /^commit(?!.*:other)/",
-          "group": "1_rebase@1"
-        },
-        {
-          "command": "slothgit.commit.edit",
-          "when": "view == slothgit.commits && viewItem =~ /^commit(?!.*:other)/ && !config.slothgit.simpleMode",
-          "group": "1_rebase@5"
-        },
-        {
-          "command": "slothgit.commit.amendStaged",
-          "when": "view == slothgit.commits && viewItem =~ /^commit(?!.*:other)/ && !config.slothgit.simpleMode",
-          "group": "1_rebase@6"
-        },
-        {
-          "command": "slothgit.commit.copyForCherryPick",
-          "when": "viewItem =~ /^(commit|reflog|refcommit)/ && viewItem =~ /^(?!.*:copied)/",
-          "group": "2_cherry@1"
-        },
-        {
-          "command": "slothgit.commit.pasteCherryPick",
-          "when": "view == slothgit.commits && slothgit.hasCherryPicks",
-          "group": "2_cherry@2"
-        },
-        {
-          "command": "slothgit.commit.movePatchHere",
-          "when": "view == slothgit.commits && slothgit.hasPatch && viewItem =~ /^commit(?!.*:other)/ && !config.slothgit.simpleMode",
-          "group": "2_cherry@3"
-        },
-        {
-          "command": "slothgit.commit.checkout",
-          "when": "viewItem =~ /^(commit|reflog|refcommit)/",
-          "group": "3_branch@1"
-        },
-        {
-          "command": "slothgit.commit.createBranch",
-          "when": "viewItem =~ /^(commit|reflog|refcommit)/",
-          "group": "3_branch@2"
-        },
-        {
-          "command": "slothgit.commit.reset",
-          "when": "viewItem =~ /^(commit|reflog|refcommit)/ && !config.slothgit.simpleMode",
-          "group": "3_branch@4"
-        },
-        {
-          "command": "slothgit.commit.revert",
-          "when": "view == slothgit.commits && viewItem =~ /^commit/",
-          "group": "3_branch@5"
-        },
-        {
-          "command": "slothgit.commit.copySha",
-          "when": "viewItem =~ /^(commit|reflog|refcommit)/",
-          "group": "4_copy@1"
-        },
-        {
-          "command": "slothgit.stash.apply",
-          "when": "viewItem == stash",
-          "group": "inline@1"
-        },
-        {
-          "command": "slothgit.stash.pop",
-          "when": "viewItem == stash",
-          "group": "inline@2"
-        },
-        {
-          "command": "slothgit.stash.apply",
-          "when": "viewItem == stash",
-          "group": "1_stash@1"
-        },
-        {
-          "command": "slothgit.stash.pop",
-          "when": "viewItem == stash",
-          "group": "1_stash@2"
-        },
-        {
-          "command": "slothgit.stash.drop",
-          "when": "viewItem == stash",
-          "group": "1_stash@3"
-        },
-        {
-          "command": "slothgit.stash.rename",
-          "when": "viewItem == stash",
-          "group": "2_stash@1"
-        },
-        {
-          "command": "slothgit.stash.branch",
-          "when": "viewItem == stash",
-          "group": "2_stash@2"
-        },
-        {
-          "command": "slothgit.branch.create",
-          "when": "view == slothgit.branches && viewItem == section:local",
-          "group": "inline@1"
-        },
-        {
-          "command": "slothgit.fetchAll",
-          "when": "view == slothgit.branches && viewItem == section:remotes",
-          "group": "inline@1"
-        },
-        {
-          "command": "slothgit.remote.add",
-          "when": "view == slothgit.branches && viewItem == section:remotes",
-          "group": "inline@2"
-        },
-        {
-          "command": "slothgit.tag.create",
-          "when": "view == slothgit.branches && viewItem == section:tags",
-          "group": "inline@1"
-        },
-        {
-          "command": "slothgit.branch.checkout",
-          "when": "view == slothgit.branches && viewItem =~ /^(branch:local(?!.*:current)|branch:remote|tag$)/",
-          "group": "inline@1"
-        },
-        {
-          "command": "slothgit.branch.fastForward",
-          "when": "view == slothgit.branches && viewItem =~ /^branch:local.*:upstream/",
-          "group": "inline@2"
-        },
-        {
-          "command": "slothgit.branch.push",
-          "when": "view == slothgit.branches && viewItem =~ /^branch:local/",
-          "group": "inline@3"
-        },
-        {
-          "command": "slothgit.remote.fetch",
-          "when": "view == slothgit.branches && viewItem == remote",
-          "group": "inline@1"
-        },
-        {
-          "command": "slothgit.branch.checkout",
-          "when": "view == slothgit.branches && viewItem =~ /^(branch:local(?!.*:current)|branch:remote|tag$)/",
-          "group": "1_checkout@1"
-        },
-        {
-          "command": "slothgit.branch.create",
-          "when": "view == slothgit.branches && viewItem =~ /^(branch:|tag$)/",
-          "group": "1_checkout@2"
-        },
-        {
-          "command": "slothgit.branch.moveCommitsToNewBranch",
-          "when": "view == slothgit.branches && viewItem =~ /^branch:local.*:current.*:upstream/",
-          "group": "1_checkout@3"
-        },
-        {
-          "command": "slothgit.branch.merge",
-          "when": "view == slothgit.branches && viewItem =~ /^(branch:local(?!.*:current)|branch:remote|tag$)/",
-          "group": "2_integrate@1"
-        },
-        {
-          "command": "slothgit.branch.rebase",
-          "when": "view == slothgit.branches && viewItem =~ /^(branch:local(?!.*:current)|branch:remote|tag$)/",
-          "group": "2_integrate@2"
-        },
-        {
-          "command": "slothgit.branch.compare",
-          "when": "view == slothgit.branches && viewItem =~ /^(branch:|tag$)/",
-          "group": "2_integrate@3"
-        },
-        {
-          "command": "slothgit.branch.fastForward",
-          "when": "view == slothgit.branches && viewItem =~ /^branch:local.*:upstream/",
-          "group": "3_sync@1"
-        },
-        {
-          "command": "slothgit.branch.push",
-          "when": "view == slothgit.branches && viewItem =~ /^branch:local/",
-          "group": "3_sync@2"
-        },
-        {
-          "command": "slothgit.branch.forcePush",
-          "when": "view == slothgit.branches && viewItem =~ /^branch:local/",
-          "group": "3_sync@3"
-        },
-        {
-          "command": "slothgit.branch.setAsUpstream",
-          "when": "view == slothgit.branches && viewItem == branch:remote && !config.slothgit.simpleMode",
-          "group": "3_sync@6"
-        },
-        {
-          "command": "slothgit.tag.push",
-          "when": "view == slothgit.branches && viewItem == tag",
-          "group": "3_sync@7"
-        },
-        {
-          "command": "slothgit.branch.rename",
-          "when": "view == slothgit.branches && viewItem =~ /^branch:local/",
-          "group": "4_manage@1"
-        },
-        {
-          "command": "slothgit.branch.delete",
-          "when": "view == slothgit.branches && viewItem =~ /^(branch:local(?!.*:current)|branch:remote)/",
-          "group": "4_manage@2"
-        },
-        {
-          "command": "slothgit.tag.delete",
-          "when": "view == slothgit.branches && viewItem == tag",
-          "group": "4_manage@3"
-        },
-        {
-          "command": "slothgit.branch.reset",
-          "when": "view == slothgit.branches && viewItem =~ /^(branch:|tag$)/ && !config.slothgit.simpleMode",
-          "group": "4_manage@5"
-        },
-        {
-          "command": "slothgit.branch.copyName",
-          "when": "view == slothgit.branches && viewItem =~ /^(branch:|tag$)/",
-          "group": "5_copy@1"
-        },
-        {
-          "command": "slothgit.remote.fetch",
-          "when": "view == slothgit.branches && viewItem == remote",
-          "group": "1_remote@1"
-        },
-        {
-          "command": "slothgit.remote.rename",
-          "when": "view == slothgit.branches && viewItem == remote",
-          "group": "2_remote@1"
-        },
-        {
-          "command": "slothgit.remote.editUrl",
-          "when": "view == slothgit.branches && viewItem == remote",
-          "group": "2_remote@2"
-        },
-        {
-          "command": "slothgit.remote.copyUrl",
-          "when": "view == slothgit.branches && viewItem == remote",
-          "group": "2_remote@3"
-        },
-        {
-          "command": "slothgit.remote.remove",
-          "when": "view == slothgit.branches && viewItem == remote",
-          "group": "2_remote@4"
-        },
-        {
-          "command": "slothgit.commit.createTag",
-          "when": "viewItem =~ /^(commit|reflog|refcommit)/",
-          "group": "3_branch@3"
-        },
-        {
-          "command": "slothgit.compare.select",
-          "when": "viewItem =~ /^(commit|reflog|refcommit)/ && !config.slothgit.simpleMode",
-          "group": "7_compare@1"
-        },
-        {
-          "command": "slothgit.compare.withSelected",
-          "when": "viewItem =~ /^(commit|reflog|refcommit)/ && slothgit.hasCompareBase && !config.slothgit.simpleMode",
-          "group": "7_compare@2"
-        },
-        {
-          "command": "slothgit.compare.select",
-          "when": "view == slothgit.branches && viewItem =~ /^(branch:|tag$)/ && !config.slothgit.simpleMode",
-          "group": "7_compare@1"
-        },
-        {
-          "command": "slothgit.compare.withSelected",
-          "when": "view == slothgit.branches && viewItem =~ /^(branch:|tag$)/ && slothgit.hasCompareBase && !config.slothgit.simpleMode",
-          "group": "7_compare@2"
-        },
-        {
-          "command": "slothgit.commit.copy",
-          "when": "viewItem =~ /^(commit|reflog|refcommit)/",
-          "group": "4_copy@3"
-        },
-        {
-          "command": "slothgit.commit.openInBrowser",
-          "when": "viewItem =~ /^(commit|reflog|refcommit)/",
-          "group": "4_copy@4"
-        },
-        {
-          "command": "slothgit.todo.moveUp",
-          "when": "view == slothgit.commits && viewItem =~ /^todo:(pick|reword|edit|squash|fixup|drop)/",
-          "group": "inline@1"
-        },
-        {
-          "command": "slothgit.todo.moveDown",
-          "when": "view == slothgit.commits && viewItem =~ /^todo:(pick|reword|edit|squash|fixup|drop)/",
-          "group": "inline@2"
-        },
-        {
-          "command": "slothgit.todo.moveUp",
-          "when": "view == slothgit.commits && viewItem =~ /^todo:(pick|reword|edit|squash|fixup|drop)/",
-          "group": "1_move@2"
-        },
-        {
-          "command": "slothgit.todo.moveDown",
-          "when": "view == slothgit.commits && viewItem =~ /^todo:(pick|reword|edit|squash|fixup|drop)/",
-          "group": "1_move@3"
-        },
-        {
-          "command": "slothgit.file.openAtRevision",
-          "when": "viewItem =~ /^file:/",
-          "group": "inline@1"
-        },
-        {
-          "command": "slothgit.file.openAtRevision",
-          "when": "viewItem =~ /^file:/",
-          "group": "1_file@1"
-        },
-        {
-          "command": "slothgit.file.checkout",
-          "when": "viewItem =~ /^file:(log|commit)$/",
-          "group": "1_file@2"
-        },
-        {
-          "command": "slothgit.file.removeFromCommit",
-          "when": "view == slothgit.commits && viewItem == file:log && !config.slothgit.simpleMode",
-          "group": "2_patch@1"
-        },
-        {
-          "command": "slothgit.file.moveToIndex",
-          "when": "view == slothgit.commits && viewItem == file:log && !config.slothgit.simpleMode",
-          "group": "2_patch@2"
-        },
-        {
-          "command": "slothgit.file.addToPatch",
-          "when": "view == slothgit.commits && viewItem == file:log && !config.slothgit.simpleMode",
-          "group": "2_patch@3"
-        },
-        {
-          "command": "slothgit.branch.createPullRequest",
-          "when": "view == slothgit.branches && viewItem =~ /^branch:/",
-          "group": "3_sync@8"
-        },
-        {
-          "command": "slothgit.worktree.add",
-          "when": "view == slothgit.branches && viewItem =~ /^branch:/ && !config.slothgit.simpleMode",
-          "group": "1_checkout@3"
-        },
-        {
-          "command": "slothgit.worktree.add",
-          "when": "view == slothgit.branches && viewItem == section:worktrees && !config.slothgit.simpleMode",
-          "group": "inline@1"
-        },
-        {
-          "command": "slothgit.worktree.prune",
-          "when": "view == slothgit.branches && viewItem == section:worktrees && !config.slothgit.simpleMode",
-          "group": "1_worktree@1"
-        },
-        {
-          "command": "slothgit.worktree.open",
-          "when": "view == slothgit.branches && viewItem =~ /^worktree/ && viewItem =~ /^worktree(?!.*:current)/",
-          "group": "inline@1"
-        },
-        {
-          "command": "slothgit.worktree.open",
-          "when": "view == slothgit.branches && viewItem =~ /^worktree/ && viewItem =~ /^worktree(?!.*:current)/",
-          "group": "1_worktree@1"
-        },
-        {
-          "command": "slothgit.worktree.openHere",
-          "when": "view == slothgit.branches && viewItem =~ /^worktree/ && viewItem =~ /^worktree(?!.*:current)/",
-          "group": "1_worktree@2"
-        },
-        {
-          "command": "slothgit.worktree.copyPath",
-          "when": "view == slothgit.branches && viewItem =~ /^worktree/",
-          "group": "2_worktree@1"
-        },
-        {
-          "command": "slothgit.worktree.remove",
-          "when": "view == slothgit.branches && viewItem =~ /^worktree(?!.*:(main|current))/",
-          "group": "3_worktree@1"
-        },
-        {
-          "submenu": "slothgit.commit.more",
-          "when": "view == slothgit.commits && viewItem =~ /^commit(?!.*:other)/ && !config.slothgit.simpleMode",
-          "group": "1_rebase@9"
-        },
-        {
-          "command": "slothgit.commit.markBase",
-          "when": "view == slothgit.branches && viewItem =~ /^refcommit/ && !config.slothgit.simpleMode",
-          "group": "1_rebase@9"
-        },
-        {
-          "submenu": "slothgit.commit.bisect",
-          "when": "view == slothgit.commits && viewItem =~ /^commit/ && !config.slothgit.simpleMode",
-          "group": "6_bisect@1"
-        },
-        {
-          "submenu": "slothgit.branch.upstream",
-          "when": "view == slothgit.branches && viewItem =~ /^branch:local/ && !config.slothgit.simpleMode",
-          "group": "3_sync@4"
-        },
-        {
-          "command": "slothgit.tag.create",
-          "when": "view == slothgit.branches && viewItem =~ /^branch:/",
-          "group": "1_checkout@4"
-        },
-        {
-          "command": "slothgit.todo.pick",
-          "when": "view == slothgit.commits && viewItem =~ /^todo:(?!pick\b)(pick|reword|edit|squash|fixup|drop)/",
-          "group": "0_action@1"
-        },
-        {
-          "command": "slothgit.todo.reword",
-          "when": "view == slothgit.commits && viewItem =~ /^todo:(?!reword\b)(pick|reword|edit|squash|fixup|drop)/",
-          "group": "0_action@2"
-        },
-        {
-          "command": "slothgit.todo.squash",
-          "when": "view == slothgit.commits && viewItem =~ /^todo:(?!squash\b)(pick|reword|edit|squash|fixup|drop)/ && viewItem =~ /^(?!.*:first)/",
-          "group": "0_action@3"
-        },
-        {
-          "command": "slothgit.todo.fixup",
-          "when": "view == slothgit.commits && viewItem =~ /^todo:(?!fixup\b)(pick|reword|edit|squash|fixup|drop)/ && viewItem =~ /^(?!.*:first)/",
-          "group": "0_action@4"
-        },
-        {
-          "command": "slothgit.todo.edit",
-          "when": "view == slothgit.commits && viewItem =~ /^todo:(?!edit\b)(pick|reword|edit|squash|fixup|drop)/",
-          "group": "0_action@5"
-        },
-        {
-          "command": "slothgit.todo.drop",
-          "when": "view == slothgit.commits && viewItem =~ /^todo:(?!drop\b)(pick|reword|edit|squash|fixup|drop)/",
-          "group": "0_action@6"
-        },
-        {
-          "command": "slothgit.commit.uncopyCherryPick",
-          "when": "viewItem =~ /^(commit|refcommit).*:copied/",
-          "group": "2_cherry@1"
-        }
-      ],
       "commandPalette": [
         {
           "command": "slothgit.patch.add",
@@ -1875,6 +1589,30 @@
         {
           "command": "slothgit.simpleMode.off",
           "when": "config.slothgit.simpleMode"
+        },
+        {
+          "command": "slothgit.file.stage",
+          "when": "false"
+        },
+        {
+          "command": "slothgit.file.unstage",
+          "when": "false"
+        },
+        {
+          "command": "slothgit.file.discard",
+          "when": "false"
+        },
+        {
+          "command": "slothgit.file.open",
+          "when": "false"
+        },
+        {
+          "command": "slothgit.file.openChange",
+          "when": "false"
+        },
+        {
+          "command": "slothgit.file.openMergeEditor",
+          "when": "false"
         }
       ],
       "explorer/context": [
@@ -1915,14 +1653,9 @@
       ],
       "scm/title": [
         {
-          "command": "slothgit.simpleMode.on",
+          "command": "slothgit.open",
           "group": "navigation@4",
-          "when": "scmProvider == git && !config.slothgit.simpleMode"
-        },
-        {
-          "command": "slothgit.simpleMode.off",
-          "group": "navigation@4",
-          "when": "scmProvider == git && config.slothgit.simpleMode"
+          "when": "scmProvider == git"
         }
       ],
       "webview/context": [
@@ -2018,43 +1751,458 @@
         },
         {
           "command": "slothgit.sync.pull",
-          "when": "webviewId == 'slothgit.sync' && webviewSection == 'pull'",
+          "when": "webviewId == 'slothgit.tab' && webviewSection == 'pull'",
           "group": "1_pull@1"
         },
         {
           "command": "slothgit.sync.pullRebase",
-          "when": "webviewId == 'slothgit.sync' && webviewSection == 'pull'",
+          "when": "webviewId == 'slothgit.tab' && webviewSection == 'pull'",
           "group": "1_pull@2"
         },
         {
           "command": "slothgit.sync.fetch",
-          "when": "webviewId == 'slothgit.sync' && webviewSection == 'pull'",
+          "when": "webviewId == 'slothgit.tab' && webviewSection == 'pull'",
           "group": "2_fetch@1"
         },
         {
           "command": "slothgit.fetchAll",
-          "when": "webviewId == 'slothgit.sync' && webviewSection == 'pull'",
+          "when": "webviewId == 'slothgit.tab' && webviewSection == 'pull'",
           "group": "2_fetch@2"
         },
         {
           "command": "slothgit.sync.push",
-          "when": "webviewId == 'slothgit.sync' && webviewSection == 'push'",
+          "when": "webviewId == 'slothgit.tab' && webviewSection == 'push'",
           "group": "1_push@1"
         },
         {
           "command": "slothgit.sync.forcePush",
-          "when": "webviewId == 'slothgit.sync' && webviewSection == 'push'",
+          "when": "webviewId == 'slothgit.tab' && webviewSection == 'push'",
           "group": "1_push@2"
         },
         {
           "command": "slothgit.sync.pushTo",
-          "when": "webviewId == 'slothgit.sync' && webviewSection == 'push'",
+          "when": "webviewId == 'slothgit.tab' && webviewSection == 'push'",
           "group": "2_other@1"
         },
         {
           "command": "slothgit.sync.setUpstream",
-          "when": "webviewId == 'slothgit.sync' && webviewSection == 'push' && !config.slothgit.simpleMode",
+          "when": "webviewId == 'slothgit.tab' && webviewSection == 'push' && !config.slothgit.simpleMode",
           "group": "2_other@2"
+        },
+        {
+          "command": "slothgit.file.openChange",
+          "when": "webviewId == 'slothgit.tab' && slothgitView == 'files' && slothgitItem =~ /^change/",
+          "group": "0_open@1"
+        },
+        {
+          "command": "slothgit.commit.openChanges",
+          "when": "webviewId == 'slothgit.tab' && slothgitItem =~ /^(commit|reflog|refcommit)/",
+          "group": "0_open@1"
+        },
+        {
+          "command": "slothgit.file.openMergeEditor",
+          "when": "webviewId == 'slothgit.tab' && slothgitView == 'files' && slothgitItem =~ /:conflict/",
+          "group": "0_open@2"
+        },
+        {
+          "command": "slothgit.file.open",
+          "when": "webviewId == 'slothgit.tab' && slothgitView == 'files' && slothgitItem =~ /^change(?!.*:deleted)/",
+          "group": "0_open@3"
+        },
+        {
+          "command": "slothgit.file.stage",
+          "when": "webviewId == 'slothgit.tab' && slothgitView == 'files' && slothgitItem =~ /:(unstaged|conflict)/",
+          "group": "1_stage@1"
+        },
+        {
+          "command": "slothgit.file.unstage",
+          "when": "webviewId == 'slothgit.tab' && slothgitView == 'files' && slothgitItem =~ /:staged/",
+          "group": "1_stage@2"
+        },
+        {
+          "command": "slothgit.file.discard",
+          "when": "webviewId == 'slothgit.tab' && slothgitView == 'files' && slothgitItem =~ /^change(?!.*:conflict)/",
+          "group": "2_discard@1"
+        },
+        {
+          "command": "slothgit.commits.showFileHistory",
+          "when": "webviewId == 'slothgit.tab' && slothgitView == 'files' && slothgitItem =~ /^change(?!.*:untracked)/",
+          "group": "3_history@1"
+        },
+        {
+          "command": "slothgit.commit.squash",
+          "when": "webviewId == 'slothgit.tab' && slothgitView == 'commits' && slothgitItem =~ /^commit(?!.*:other)/",
+          "group": "1_rebase@2"
+        },
+        {
+          "command": "slothgit.commit.fixup",
+          "when": "webviewId == 'slothgit.tab' && slothgitView == 'commits' && slothgitItem =~ /^commit(?!.*:other)/",
+          "group": "1_rebase@3"
+        },
+        {
+          "command": "slothgit.commit.drop",
+          "when": "webviewId == 'slothgit.tab' && slothgitView == 'commits' && slothgitItem =~ /^commit(?!.*:other)/",
+          "group": "1_rebase@4"
+        },
+        {
+          "command": "slothgit.commit.reword",
+          "when": "webviewId == 'slothgit.tab' && slothgitView == 'commits' && slothgitItem =~ /^commit(?!.*:other)/",
+          "group": "1_rebase@1"
+        },
+        {
+          "command": "slothgit.commit.edit",
+          "when": "webviewId == 'slothgit.tab' && slothgitView == 'commits' && slothgitItem =~ /^commit(?!.*:other)/ && !config.slothgit.simpleMode",
+          "group": "1_rebase@5"
+        },
+        {
+          "command": "slothgit.commit.amendStaged",
+          "when": "webviewId == 'slothgit.tab' && slothgitView == 'commits' && slothgitItem =~ /^commit(?!.*:other)/ && !config.slothgit.simpleMode",
+          "group": "1_rebase@6"
+        },
+        {
+          "command": "slothgit.commit.copyForCherryPick",
+          "when": "webviewId == 'slothgit.tab' && slothgitItem =~ /^(commit|reflog|refcommit)/ && slothgitItem =~ /^(?!.*:copied)/",
+          "group": "2_cherry@1"
+        },
+        {
+          "command": "slothgit.commit.pasteCherryPick",
+          "when": "webviewId == 'slothgit.tab' && slothgitView == 'commits' && slothgit.hasCherryPicks",
+          "group": "2_cherry@2"
+        },
+        {
+          "command": "slothgit.commit.movePatchHere",
+          "when": "webviewId == 'slothgit.tab' && slothgitView == 'commits' && slothgit.hasPatch && slothgitItem =~ /^commit(?!.*:other)/ && !config.slothgit.simpleMode",
+          "group": "2_cherry@3"
+        },
+        {
+          "command": "slothgit.commit.checkout",
+          "when": "webviewId == 'slothgit.tab' && slothgitItem =~ /^(commit|reflog|refcommit)/",
+          "group": "3_branch@1"
+        },
+        {
+          "command": "slothgit.commit.createBranch",
+          "when": "webviewId == 'slothgit.tab' && slothgitItem =~ /^(commit|reflog|refcommit)/",
+          "group": "3_branch@2"
+        },
+        {
+          "command": "slothgit.commit.reset",
+          "when": "webviewId == 'slothgit.tab' && slothgitItem =~ /^(commit|reflog|refcommit)/ && !config.slothgit.simpleMode",
+          "group": "3_branch@4"
+        },
+        {
+          "command": "slothgit.commit.revert",
+          "when": "webviewId == 'slothgit.tab' && slothgitView == 'commits' && slothgitItem =~ /^commit/",
+          "group": "3_branch@5"
+        },
+        {
+          "command": "slothgit.commit.copySha",
+          "when": "webviewId == 'slothgit.tab' && slothgitItem =~ /^(commit|reflog|refcommit)/",
+          "group": "4_copy@1"
+        },
+        {
+          "command": "slothgit.stash.apply",
+          "when": "webviewId == 'slothgit.tab' && slothgitItem == stash",
+          "group": "1_stash@1"
+        },
+        {
+          "command": "slothgit.stash.pop",
+          "when": "webviewId == 'slothgit.tab' && slothgitItem == stash",
+          "group": "1_stash@2"
+        },
+        {
+          "command": "slothgit.stash.drop",
+          "when": "webviewId == 'slothgit.tab' && slothgitItem == stash",
+          "group": "1_stash@3"
+        },
+        {
+          "command": "slothgit.stash.rename",
+          "when": "webviewId == 'slothgit.tab' && slothgitItem == stash",
+          "group": "2_stash@1"
+        },
+        {
+          "command": "slothgit.stash.branch",
+          "when": "webviewId == 'slothgit.tab' && slothgitItem == stash",
+          "group": "2_stash@2"
+        },
+        {
+          "command": "slothgit.branch.checkout",
+          "when": "webviewId == 'slothgit.tab' && slothgitView == 'branches' && slothgitItem =~ /^(branch:local(?!.*:current)|branch:remote|tag$)/",
+          "group": "1_checkout@1"
+        },
+        {
+          "command": "slothgit.branch.create",
+          "when": "webviewId == 'slothgit.tab' && slothgitView == 'branches' && slothgitItem =~ /^(branch:|tag$)/",
+          "group": "1_checkout@2"
+        },
+        {
+          "command": "slothgit.branch.moveCommitsToNewBranch",
+          "when": "webviewId == 'slothgit.tab' && slothgitView == 'branches' && slothgitItem =~ /^branch:local.*:current.*:upstream/",
+          "group": "1_checkout@3"
+        },
+        {
+          "command": "slothgit.branch.merge",
+          "when": "webviewId == 'slothgit.tab' && slothgitView == 'branches' && slothgitItem =~ /^(branch:local(?!.*:current)|branch:remote|tag$)/",
+          "group": "2_integrate@1"
+        },
+        {
+          "command": "slothgit.branch.rebase",
+          "when": "webviewId == 'slothgit.tab' && slothgitView == 'branches' && slothgitItem =~ /^(branch:local(?!.*:current)|branch:remote|tag$)/",
+          "group": "2_integrate@2"
+        },
+        {
+          "command": "slothgit.branch.compare",
+          "when": "webviewId == 'slothgit.tab' && slothgitView == 'branches' && slothgitItem =~ /^(branch:|tag$)/",
+          "group": "2_integrate@3"
+        },
+        {
+          "command": "slothgit.branch.fastForward",
+          "when": "webviewId == 'slothgit.tab' && slothgitView == 'branches' && slothgitItem =~ /^branch:local.*:upstream/",
+          "group": "3_sync@1"
+        },
+        {
+          "command": "slothgit.branch.push",
+          "when": "webviewId == 'slothgit.tab' && slothgitView == 'branches' && slothgitItem =~ /^branch:local/",
+          "group": "3_sync@2"
+        },
+        {
+          "command": "slothgit.branch.forcePush",
+          "when": "webviewId == 'slothgit.tab' && slothgitView == 'branches' && slothgitItem =~ /^branch:local/",
+          "group": "3_sync@3"
+        },
+        {
+          "command": "slothgit.branch.setAsUpstream",
+          "when": "webviewId == 'slothgit.tab' && slothgitView == 'branches' && slothgitItem == branch:remote && !config.slothgit.simpleMode",
+          "group": "3_sync@6"
+        },
+        {
+          "command": "slothgit.tag.push",
+          "when": "webviewId == 'slothgit.tab' && slothgitView == 'branches' && slothgitItem == tag",
+          "group": "3_sync@7"
+        },
+        {
+          "command": "slothgit.branch.rename",
+          "when": "webviewId == 'slothgit.tab' && slothgitView == 'branches' && slothgitItem =~ /^branch:local/",
+          "group": "4_manage@1"
+        },
+        {
+          "command": "slothgit.branch.delete",
+          "when": "webviewId == 'slothgit.tab' && slothgitView == 'branches' && slothgitItem =~ /^(branch:local(?!.*:current)|branch:remote)/",
+          "group": "4_manage@2"
+        },
+        {
+          "command": "slothgit.tag.delete",
+          "when": "webviewId == 'slothgit.tab' && slothgitView == 'branches' && slothgitItem == tag",
+          "group": "4_manage@3"
+        },
+        {
+          "command": "slothgit.branch.reset",
+          "when": "webviewId == 'slothgit.tab' && slothgitView == 'branches' && slothgitItem =~ /^(branch:|tag$)/ && !config.slothgit.simpleMode",
+          "group": "4_manage@5"
+        },
+        {
+          "command": "slothgit.branch.copyName",
+          "when": "webviewId == 'slothgit.tab' && slothgitView == 'branches' && slothgitItem =~ /^(branch:|tag$)/",
+          "group": "5_copy@1"
+        },
+        {
+          "command": "slothgit.remote.fetch",
+          "when": "webviewId == 'slothgit.tab' && slothgitView == 'branches' && slothgitItem == remote",
+          "group": "1_remote@1"
+        },
+        {
+          "command": "slothgit.remote.rename",
+          "when": "webviewId == 'slothgit.tab' && slothgitView == 'branches' && slothgitItem == remote",
+          "group": "2_remote@1"
+        },
+        {
+          "command": "slothgit.remote.editUrl",
+          "when": "webviewId == 'slothgit.tab' && slothgitView == 'branches' && slothgitItem == remote",
+          "group": "2_remote@2"
+        },
+        {
+          "command": "slothgit.remote.copyUrl",
+          "when": "webviewId == 'slothgit.tab' && slothgitView == 'branches' && slothgitItem == remote",
+          "group": "2_remote@3"
+        },
+        {
+          "command": "slothgit.remote.remove",
+          "when": "webviewId == 'slothgit.tab' && slothgitView == 'branches' && slothgitItem == remote",
+          "group": "2_remote@4"
+        },
+        {
+          "command": "slothgit.commit.createTag",
+          "when": "webviewId == 'slothgit.tab' && slothgitItem =~ /^(commit|reflog|refcommit)/",
+          "group": "3_branch@3"
+        },
+        {
+          "command": "slothgit.compare.select",
+          "when": "webviewId == 'slothgit.tab' && slothgitItem =~ /^(commit|reflog|refcommit)/ && !config.slothgit.simpleMode",
+          "group": "7_compare@1"
+        },
+        {
+          "command": "slothgit.compare.withSelected",
+          "when": "webviewId == 'slothgit.tab' && slothgitItem =~ /^(commit|reflog|refcommit)/ && slothgit.hasCompareBase && !config.slothgit.simpleMode",
+          "group": "7_compare@2"
+        },
+        {
+          "command": "slothgit.compare.select",
+          "when": "webviewId == 'slothgit.tab' && slothgitView == 'branches' && slothgitItem =~ /^(branch:|tag$)/ && !config.slothgit.simpleMode",
+          "group": "7_compare@1"
+        },
+        {
+          "command": "slothgit.compare.withSelected",
+          "when": "webviewId == 'slothgit.tab' && slothgitView == 'branches' && slothgitItem =~ /^(branch:|tag$)/ && slothgit.hasCompareBase && !config.slothgit.simpleMode",
+          "group": "7_compare@2"
+        },
+        {
+          "command": "slothgit.commit.copy",
+          "when": "webviewId == 'slothgit.tab' && slothgitItem =~ /^(commit|reflog|refcommit)/",
+          "group": "4_copy@3"
+        },
+        {
+          "command": "slothgit.commit.openInBrowser",
+          "when": "webviewId == 'slothgit.tab' && slothgitItem =~ /^(commit|reflog|refcommit)/",
+          "group": "4_copy@4"
+        },
+        {
+          "command": "slothgit.todo.moveUp",
+          "when": "webviewId == 'slothgit.tab' && slothgitView == 'commits' && slothgitItem =~ /^todo:(pick|reword|edit|squash|fixup|drop)/",
+          "group": "1_move@2"
+        },
+        {
+          "command": "slothgit.todo.moveDown",
+          "when": "webviewId == 'slothgit.tab' && slothgitView == 'commits' && slothgitItem =~ /^todo:(pick|reword|edit|squash|fixup|drop)/",
+          "group": "1_move@3"
+        },
+        {
+          "command": "slothgit.file.openAtRevision",
+          "when": "webviewId == 'slothgit.tab' && slothgitItem =~ /^file:/",
+          "group": "1_file@1"
+        },
+        {
+          "command": "slothgit.file.checkout",
+          "when": "webviewId == 'slothgit.tab' && slothgitItem =~ /^file:(log|commit)$/",
+          "group": "1_file@2"
+        },
+        {
+          "command": "slothgit.file.removeFromCommit",
+          "when": "webviewId == 'slothgit.tab' && slothgitView == 'commits' && slothgitItem == file:log && !config.slothgit.simpleMode",
+          "group": "2_patch@1"
+        },
+        {
+          "command": "slothgit.file.moveToIndex",
+          "when": "webviewId == 'slothgit.tab' && slothgitView == 'commits' && slothgitItem == file:log && !config.slothgit.simpleMode",
+          "group": "2_patch@2"
+        },
+        {
+          "command": "slothgit.file.addToPatch",
+          "when": "webviewId == 'slothgit.tab' && slothgitView == 'commits' && slothgitItem == file:log && !config.slothgit.simpleMode",
+          "group": "2_patch@3"
+        },
+        {
+          "command": "slothgit.branch.createPullRequest",
+          "when": "webviewId == 'slothgit.tab' && slothgitView == 'branches' && slothgitItem =~ /^branch:/",
+          "group": "3_sync@8"
+        },
+        {
+          "command": "slothgit.worktree.add",
+          "when": "webviewId == 'slothgit.tab' && slothgitView == 'branches' && slothgitItem =~ /^branch:/ && !config.slothgit.simpleMode",
+          "group": "1_checkout@3"
+        },
+        {
+          "command": "slothgit.worktree.prune",
+          "when": "webviewId == 'slothgit.tab' && slothgitView == 'branches' && slothgitItem == section:worktrees && !config.slothgit.simpleMode",
+          "group": "1_worktree@1"
+        },
+        {
+          "command": "slothgit.worktree.open",
+          "when": "webviewId == 'slothgit.tab' && slothgitView == 'branches' && slothgitItem =~ /^worktree/ && slothgitItem =~ /^worktree(?!.*:current)/",
+          "group": "1_worktree@1"
+        },
+        {
+          "command": "slothgit.worktree.openHere",
+          "when": "webviewId == 'slothgit.tab' && slothgitView == 'branches' && slothgitItem =~ /^worktree/ && slothgitItem =~ /^worktree(?!.*:current)/",
+          "group": "1_worktree@2"
+        },
+        {
+          "command": "slothgit.worktree.copyPath",
+          "when": "webviewId == 'slothgit.tab' && slothgitView == 'branches' && slothgitItem =~ /^worktree/",
+          "group": "2_worktree@1"
+        },
+        {
+          "command": "slothgit.worktree.remove",
+          "when": "webviewId == 'slothgit.tab' && slothgitView == 'branches' && slothgitItem =~ /^worktree(?!.*:(main|current))/",
+          "group": "3_worktree@1"
+        },
+        {
+          "submenu": "slothgit.commit.more",
+          "when": "webviewId == 'slothgit.tab' && slothgitView == 'commits' && slothgitItem =~ /^commit(?!.*:other)/ && !config.slothgit.simpleMode",
+          "group": "1_rebase@9"
+        },
+        {
+          "command": "slothgit.commit.markBase",
+          "when": "webviewId == 'slothgit.tab' && slothgitView == 'branches' && slothgitItem =~ /^refcommit/ && !config.slothgit.simpleMode",
+          "group": "1_rebase@9"
+        },
+        {
+          "submenu": "slothgit.commit.bisect",
+          "when": "webviewId == 'slothgit.tab' && slothgitView == 'commits' && slothgitItem =~ /^commit/ && !config.slothgit.simpleMode",
+          "group": "6_bisect@1"
+        },
+        {
+          "submenu": "slothgit.branch.upstream",
+          "when": "webviewId == 'slothgit.tab' && slothgitView == 'branches' && slothgitItem =~ /^branch:local/ && !config.slothgit.simpleMode",
+          "group": "3_sync@4"
+        },
+        {
+          "command": "slothgit.tag.create",
+          "when": "webviewId == 'slothgit.tab' && slothgitView == 'branches' && slothgitItem =~ /^branch:/",
+          "group": "1_checkout@4"
+        },
+        {
+          "command": "slothgit.todo.pick",
+          "when": "webviewId == 'slothgit.tab' && slothgitView == 'commits' && slothgitItem =~ /^todo:(?!pick\b)(pick|reword|edit|squash|fixup|drop)/",
+          "group": "0_action@1"
+        },
+        {
+          "command": "slothgit.todo.reword",
+          "when": "webviewId == 'slothgit.tab' && slothgitView == 'commits' && slothgitItem =~ /^todo:(?!reword\b)(pick|reword|edit|squash|fixup|drop)/",
+          "group": "0_action@2"
+        },
+        {
+          "command": "slothgit.todo.squash",
+          "when": "webviewId == 'slothgit.tab' && slothgitView == 'commits' && slothgitItem =~ /^todo:(?!squash\b)(pick|reword|edit|squash|fixup|drop)/ && slothgitItem =~ /^(?!.*:first)/",
+          "group": "0_action@3"
+        },
+        {
+          "command": "slothgit.todo.fixup",
+          "when": "webviewId == 'slothgit.tab' && slothgitView == 'commits' && slothgitItem =~ /^todo:(?!fixup\b)(pick|reword|edit|squash|fixup|drop)/ && slothgitItem =~ /^(?!.*:first)/",
+          "group": "0_action@4"
+        },
+        {
+          "command": "slothgit.todo.edit",
+          "when": "webviewId == 'slothgit.tab' && slothgitView == 'commits' && slothgitItem =~ /^todo:(?!edit\b)(pick|reword|edit|squash|fixup|drop)/",
+          "group": "0_action@5"
+        },
+        {
+          "command": "slothgit.todo.drop",
+          "when": "webviewId == 'slothgit.tab' && slothgitView == 'commits' && slothgitItem =~ /^todo:(?!drop\b)(pick|reword|edit|squash|fixup|drop)/",
+          "group": "0_action@6"
+        },
+        {
+          "command": "slothgit.commit.uncopyCherryPick",
+          "when": "webviewId == 'slothgit.tab' && slothgitItem =~ /^(commit|refcommit).*:copied/",
+          "group": "2_cherry@1"
+        },
+        {
+          "command": "slothgit.commit.moveUp",
+          "when": "webviewId == 'slothgit.tab' && slothgitView == 'commits' && slothgitItem =~ /^commit(?!.*:(head|other))/ && !config.slothgit.simpleMode",
+          "group": "1_rebase@7"
+        },
+        {
+          "command": "slothgit.commit.moveDown",
+          "when": "webviewId == 'slothgit.tab' && slothgitView == 'commits' && slothgitItem =~ /^commit(?!.*:(root|other))/ && !config.slothgit.simpleMode",
+          "group": "1_rebase@8"
         }
       ],
       "slothgit.commit.bisect": [
@@ -2080,49 +2228,49 @@
       "slothgit.branch.upstream": [
         {
           "command": "slothgit.branch.setUpstream",
-          "when": "view == slothgit.branches && viewItem =~ /^branch:local/",
+          "when": "slothgitView == 'branches' && slothgitItem =~ /^branch:local/",
           "group": "1_upstream@1"
         },
         {
           "command": "slothgit.branch.unsetUpstream",
-          "when": "view == slothgit.branches && viewItem =~ /^branch:local.*:upstream/",
+          "when": "slothgitView == 'branches' && slothgitItem =~ /^branch:local.*:upstream/",
           "group": "1_upstream@2"
         }
       ],
       "slothgit.commit.more": [
         {
           "command": "slothgit.commit.rewordInEditor",
-          "when": "(view == slothgit.commits && viewItem =~ /^commit(?!.*:other)/) || (webviewId == 'slothgit.graph' && webviewSection == 'commit' && slothgitOnHead)",
+          "when": "(slothgitView == 'commits' && slothgitItem =~ /^commit(?!.*:other)/) || (webviewId == 'slothgit.graph' && webviewSection == 'commit' && slothgitOnHead)",
           "group": "1_amend@1"
         },
         {
           "command": "slothgit.commit.amendAuthor",
-          "when": "(view == slothgit.commits && viewItem =~ /^commit(?!.*:other)/) || (webviewId == 'slothgit.graph' && webviewSection == 'commit' && slothgitOnHead)",
+          "when": "(slothgitView == 'commits' && slothgitItem =~ /^commit(?!.*:other)/) || (webviewId == 'slothgit.graph' && webviewSection == 'commit' && slothgitOnHead)",
           "group": "1_amend@2"
         },
         {
           "command": "slothgit.commit.createFixup",
-          "when": "(view == slothgit.commits && viewItem =~ /^commit(?!.*:other)/) || (webviewId == 'slothgit.graph' && webviewSection == 'commit' && slothgitOnHead)",
+          "when": "(slothgitView == 'commits' && slothgitItem =~ /^commit(?!.*:other)/) || (webviewId == 'slothgit.graph' && webviewSection == 'commit' && slothgitOnHead)",
           "group": "1_amend@3"
         },
         {
           "command": "slothgit.commit.autosquash",
-          "when": "view == slothgit.commits && viewItem =~ /^commit(?!.*:other)/",
+          "when": "slothgitView == 'commits' && slothgitItem =~ /^commit(?!.*:other)/",
           "group": "1_amend@4"
         },
         {
           "command": "slothgit.commit.moveUp",
-          "when": "view == slothgit.commits && viewItem =~ /^commit(?!.*:(head|other))/",
+          "when": "slothgitView == 'commits' && slothgitItem =~ /^commit(?!.*:(head|other))/",
           "group": "2_move@1"
         },
         {
           "command": "slothgit.commit.moveDown",
-          "when": "view == slothgit.commits && viewItem =~ /^commit(?!.*:(root|other))/",
+          "when": "slothgitView == 'commits' && slothgitItem =~ /^commit(?!.*:(root|other))/",
           "group": "2_move@2"
         },
         {
           "command": "slothgit.commit.markBase",
-          "when": "view == slothgit.commits",
+          "when": "slothgitView == 'commits'",
           "group": "3_base@1"
         }
       ]
@@ -2145,12 +2293,12 @@
       {
         "id": "gettingStarted",
         "title": "Get Started with SlothGit",
-        "description": "What the SlothGit views show, and plain-language guides to Git features such as rebase, cherry-pick, worktrees and bisect.",
+        "description": "What the SlothGit tab shows, and plain-language guides to Git features such as rebase, cherry-pick, worktrees and bisect.",
         "steps": [
           {
             "id": "views",
             "title": "Where SlothGit lives",
-            "description": "Four views in the Source Control sidebar: Branches, Commits, Reflog and Stashes, and Simple Mode for fewer, everyday actions.\n[Open the Commits view](command:slothgit.commits.focus)",
+            "description": "A tab with lazygit's panels side by side: Status, Files, Branches, Commits and Stash, the selected one's changes, and Simple Mode for fewer, everyday actions.\n[Open SlothGit](command:slothgit.open?%5B%22commits%22%5D)",
             "media": {
               "markdown": "media/walkthrough/views.md"
             }
@@ -2158,7 +2306,7 @@
           {
             "id": "reading",
             "title": "Read the commit list",
-            "description": "What the red, yellow and green commits mean, and the ↑↓ counts on branches.\n[Open the Branches view](command:slothgit.branches.focus)",
+            "description": "What the red, yellow and green commits mean, and the ↑↓ counts on branches.\n[Open the Branches panel](command:slothgit.open?%5B%22local%22%5D)",
             "media": {
               "markdown": "media/walkthrough/reading.md"
             }
@@ -2166,7 +2314,7 @@
           {
             "id": "undo",
             "title": "Undo almost anything",
-            "description": "Undo and Redo on the Commits view take back your last Git action. The Reflog finds anything else.\n[Open the Reflog view](command:slothgit.reflog.focus)",
+            "description": "Undo and Redo on the Commits panel take back your last Git action. The Reflog finds anything else.\n[Open the Reflog](command:slothgit.open?%5B%22reflog%22%5D)",
             "media": {
               "markdown": "media/walkthrough/undo.md"
             }
@@ -2174,7 +2322,7 @@
           {
             "id": "tidy",
             "title": "Tidy up commits",
-            "description": "Reword, squash, fixup, drop and reorder commits before you push. What a fixup commit is.\n[Open the Commits view](command:slothgit.commits.focus)",
+            "description": "Reword, squash, fixup, drop and reorder commits before you push. What a fixup commit is.\n[Open the Commits panel](command:slothgit.open?%5B%22commits%22%5D)",
             "media": {
               "markdown": "media/walkthrough/tidy.md"
             }
@@ -2182,7 +2330,7 @@
           {
             "id": "merge-rebase",
             "title": "Merge or rebase?",
-            "description": "Two ways to combine branches, when to use which, and what an interactive rebase is for.\n[Open the Branches view](command:slothgit.branches.focus)",
+            "description": "Two ways to combine branches, when to use which, and what an interactive rebase is for.\n[Open the Branches panel](command:slothgit.open?%5B%22local%22%5D)",
             "media": {
               "markdown": "media/walkthrough/merge-rebase.md"
             }
@@ -2190,7 +2338,7 @@
           {
             "id": "cherry-pick",
             "title": "Copy commits to another branch",
-            "description": "Cherry-pick single commits, or move commits made on the wrong branch.\n[Open the Branches view](command:slothgit.branches.focus)",
+            "description": "Cherry-pick single commits, or move commits made on the wrong branch.\n[Open the Branches panel](command:slothgit.open?%5B%22local%22%5D)",
             "media": {
               "markdown": "media/walkthrough/cherry-pick.md"
             }
@@ -2198,7 +2346,7 @@
           {
             "id": "stash",
             "title": "Put work aside",
-            "description": "Stash uncommitted changes to switch tasks, and bring them back later.\n[Open the Stashes view](command:slothgit.stashes.focus)",
+            "description": "Stash uncommitted changes to switch tasks, and bring them back later.\n[Open the Stash panel](command:slothgit.open?%5B%22stash%22%5D)",
             "media": {
               "markdown": "media/walkthrough/stash.md"
             }
@@ -2206,7 +2354,7 @@
           {
             "id": "worktrees",
             "title": "Work on two branches at once",
-            "description": "Worktrees: a second folder with another branch checked out, for urgent fixes or reviews.\n[Open the Branches view](command:slothgit.branches.focus)",
+            "description": "Worktrees: a second folder with another branch checked out, for urgent fixes or reviews.\n[Open the Worktrees tab](command:slothgit.open?%5B%22worktrees%22%5D)",
             "media": {
               "markdown": "media/walkthrough/worktrees.md"
             }
@@ -2214,14 +2362,23 @@
           {
             "id": "bisect",
             "title": "Find the commit that broke something",
-            "description": "Bisect narrows down the commit that introduced a bug in a few steps.\n[Open the Commits view](command:slothgit.commits.focus)",
+            "description": "Bisect narrows down the commit that introduced a bug in a few steps.\n[Open the Commits panel](command:slothgit.open?%5B%22commits%22%5D)",
             "media": {
               "markdown": "media/walkthrough/bisect.md"
             }
           }
         ]
       }
-    ]
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "slothgit",
+          "title": "SlothGit",
+          "icon": "media/icon-mono.svg"
+        }
+      ]
+    }
   },
   "scripts": {
     "build": "node esbuild.mjs",
@@ -2238,6 +2395,7 @@
   "devDependencies": {
     "@types/node": "^20.14.0",
     "@types/vscode": "~1.90.0",
+    "@vscode/codicons": "^0.0.36",
     "@vscode/vsce": "^3.2.0",
     "esbuild": "^0.28.2",
     "ovsx": "^1.2.0",

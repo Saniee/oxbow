@@ -1,6 +1,6 @@
 # Reading the commit list
 
-Each row in the **Commits** view is one commit: its short ID (SHA), the author's initials, the message, how long ago it was made, and any branches or tags pointing at it.
+Each row in the **Commits** panel is one commit: its short ID (SHA), the author's initials, the message, how long ago it was made, and any branches or tags pointing at it.
 
 **The icon colour tells you where the commit is:**
 
@@ -10,7 +10,7 @@ Each row in the **Commits** view is one commit: its short ID (SHA), the author's
 
 SlothGit asks before changing yellow or green commits.
 
-**In the Branches view**, a branch shows how it compares with its remote copy:
+**In the Branches panel**, a branch shows how it compares with its remote copy:
 
 - **↑2**: you have 2 commits the remote doesn't. **Push** sends them.
 - **↓3**: the remote has 3 commits you don't. **Pull** (or **Fast-Forward**) brings them in.

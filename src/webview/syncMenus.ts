@@ -1,6 +1,6 @@
-// The Sync view's Pull and Push dropdowns. The ⌄ buttons show them as a quick pick (views/syncView.ts); the same
+// The Status panel's Pull and Push dropdowns. The ⌄ buttons show them as a quick pick (tab/tabPanel.ts); the same
 // entries are the native right-click menu (package.json webview/context, kept in step by test/contributions.test.ts).
-import type { SyncMenu } from './messages';
+export type SyncMenu = 'pull' | 'push';
 
 export interface SyncMenuItem {
   command: string;

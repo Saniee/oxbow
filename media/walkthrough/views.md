@@ -1,21 +1,19 @@
 # Where SlothGit lives
 
-SlothGit adds five views to the **Source Control** sidebar, under VS Code's own **Changes** view:
+SlothGit opens in a tab of its own: click the SlothGit icon in the Activity Bar, or the SlothGit button on the **Source Control** title bar. Like lazygit, it shows everything side by side:
 
-| View | What it shows | You use it to… |
+| Panel | What it shows | You use it to… |
 | --- | --- | --- |
-| **Sync** | The branch you're on and how far it is ahead (↑) or behind (↓) its copy on the remote | Pull, push, fetch; the ⌄ arrows hold the other ways to do it |
-| **Branches** | Your branches, the remotes (such as GitHub) and their branches, tags and worktrees | Switch branches, merge, rebase, push, pull |
-| **Commits** | The history of the branch you're on, newest at the top | Change commits: reword, squash, drop, reorder, undo |
-| **Reflog** | Every place your branch has pointed to recently | Get back something you lost |
-| **Stashes** | Work you put aside without committing | Bring that work back later |
+| **Status** | The branch you're on and how far it is ahead (↑) or behind (↓) its copy on the remote | Pull, push, fetch; the ⌄ arrows hold the other ways to do it. Continue or abort a rebase or merge that stopped |
+| **Files** | Files you changed since the last commit, and whether each change is staged | Stage, unstage or discard changes, and commit them with the box below |
+| **Branches** | Your branches, the remotes (such as GitHub) and their branches, tags and worktrees, one tab each | Switch branches, merge, rebase, push, pull |
+| **Commits** | The history of the branch you're on, newest at the top; its **Reflog** tab lists every place your branch has pointed to recently | Change commits: reword, squash, drop, reorder, undo. Get back something you lost |
+| **Stash** | Work you put aside without committing | Bring that work back later |
 
-Tip: drag the **Sync** view's title above **Changes** to keep Pull and Push right next to the commit box. VS Code remembers where you put it.
+Select anything and the big pane on the right shows it: a commit's message, files and changes, a branch's history, a file's changes. Below it, the **Command Log** lists the Git commands SlothGit ran for you.
 
-Staging files and making new commits still happens in VS Code's **Changes** view, as before. SlothGit is for everything after that.
-
-**Right-click** anything in these views to see what you can do with it. Hover over a commit or branch for its details.
+**Right-click** anything to see what you can do with it. The most common actions are also buttons on a row when the mouse is over it. Hover over a commit or branch for its details.
 
 ## Simple Mode
 
-New to Git? Turn on **Simple Mode** with the eye button on the **Changes** title bar (or **Switch to Simple Mode** in any SlothGit view's **…** menu). It hides the advanced actions (bisect, custom patches, worktrees, compare, resets and the Reflog view) so the menus show only everyday things. Press the button again to bring them back. Everything stays available from the Command Palette.
+New to Git? Choose **Switch to Simple Mode** in the Status panel's **…** menu. It hides the advanced actions (bisect, custom patches, worktrees, compare, resets and the Reflog) so the menus show only everyday things. **Show All Actions** in the same menu brings them back. Everything stays available from the Command Palette.

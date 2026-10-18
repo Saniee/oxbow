@@ -1,7 +1,9 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { fromGraph } from './views/graphPanel';
+import { setContext } from './contextKeys';
+import { editorColumn, leaveTab } from './views/editorPlacement';
+import { fromWebview, type ListView } from './views/webviewNodes';
 import type { GitOps } from './git/operations';
 import { commitUrl, toWebRepo, type WebRepo } from './git/hosting';
 import { removalPatch, selectionPatch, type LineRange, type Side } from './git/patch';
@@ -17,8 +19,8 @@ import type { CommitsProvider } from './views/providers';
 export interface CommandDeps {
   repos: RepoManager;
   commits: CommitsProvider;
-  commitsView: vscode.TreeView<Node>;
-  stashView: vscode.TreeView<Node>;
+  commitsView: ListView;
+  stashView: ListView;
   clipboard: CherryPickClipboard;
   patch: CustomPatch;
   runner: Runner;
@@ -34,7 +36,7 @@ export function registerCommands(deps: CommandDeps): vscode.Disposable[] {
   // --- target resolution ----------------------------------------------------
 
   /** Nodes a command acts on: the multi-selection, the clicked node, or (when invoked without arguments) the view selection. */
-  function resolve<T extends Node>(kind: T['kind'], view: vscode.TreeView<Node>, arg?: Node, all?: Node[]): T[] {
+  function resolve<T extends Node>(kind: T['kind'], view: ListView, arg?: Node, all?: Node[]): T[] {
     const nodes = all?.length ? all : arg ? [arg] : [...view.selection];
     return nodes.filter((n): n is T => n.kind === kind);
   }
@@ -359,7 +361,7 @@ export function registerCommands(deps: CommandDeps): vscode.Disposable[] {
       const { right, left } = diffUris(repos, node);
       const uri = node.pair.change.status === 'D' ? left : right;
       await loadDocuments(`Loading ${path.posix.basename(node.pair.change.path)}…`, [uri]);
-      await vscode.window.showTextDocument(uri, { preview: true });
+      await vscode.window.showTextDocument(uri, { preview: true, viewColumn: editorColumn() });
     },
 
     'slothgit.commit.copyForCherryPick': (arg?: Node, all?: Node[]) => {
@@ -449,7 +451,7 @@ export function registerCommands(deps: CommandDeps): vscode.Disposable[] {
       rememberCommitDiff(node, left, right);
       const title = `${path.posix.basename(node.pair.change.path)} (${node.label})`;
       await loadDocuments(`Loading ${path.posix.basename(node.pair.change.path)}…`, existingSides({ left, right }, node));
-      await vscode.commands.executeCommand('vscode.diff', left, right, title, { preview: true });
+      await vscode.commands.executeCommand('vscode.diff', left, right, title, { preview: true, viewColumn: editorColumn() });
     },
 
     'slothgit.operation.continue': () => withOperation('Continuing…', (ops, op) => ops.continueOperation(op)),
@@ -743,12 +745,12 @@ export function registerCommands(deps: CommandDeps): vscode.Disposable[] {
     const built = ops && (await builtPatch(ops, false));
     if (!built) return;
     const content = await ops.patchContent(built.commit.sha, built.removal);
-    await vscode.window.showTextDocument(await vscode.workspace.openTextDocument({ language: 'diff', content }), { preview: true });
+    await vscode.window.showTextDocument(await vscode.workspace.openTextDocument({ language: 'diff', content }), { preview: true, viewColumn: editorColumn() });
   }
 
   function setBase(sha: string | undefined): void {
     commits.baseSha = sha;
-    void vscode.commands.executeCommand('setContext', 'slothgit.hasRebaseBase', !!sha);
+    setContext('slothgit.hasRebaseBase', !!sha);
     commits.redraw();
     if (sha) {
       void vscode.window.showInformationMessage(
@@ -757,10 +759,10 @@ export function registerCommands(deps: CommandDeps): vscode.Disposable[] {
     }
   }
 
-  // fromGraph: the graph panel's context menu passes a webview context instead of a node.
+  // fromWebview: the tab's and the graph's context menus pass a webview context instead of a node.
   return [
     patchContext,
-    ...Object.entries(commands).map(([id, handler]) => vscode.commands.registerCommand(id, (...args: unknown[]) => handler(...fromGraph(args)))),
+    ...Object.entries(commands).map(([id, handler]) => vscode.commands.registerCommand(id, (...args: unknown[]) => handler(...fromWebview(args)))),
   ];
 }
 
@@ -783,7 +785,7 @@ function rememberCommitDiff(file: FileNode, left: vscode.Uri, right: vscode.Uri)
 
 function updatePatchContext(editor: vscode.TextEditor | undefined): void {
   const known = !!editor && commitDiffs.has(editor.document.uri.toString());
-  void vscode.commands.executeCommand('setContext', 'slothgit.inCommitDiff', known);
+  setContext('slothgit.inCommitDiff', known);
 }
 
 export function diffUris(repos: RepoManager, node: FileNode) {
@@ -813,6 +815,7 @@ export async function openMultiDiff(repos: RepoManager, title: string, files: Fi
   // The multi-diff editor renders lazily, so loading the first screenful is enough.
   const firstScreen = files.slice(0, PRELOAD_FILES).flatMap((f) => existingSides(diffUris(repos, f), f));
   await loadDocuments(`Loading changes (${files.length} ${files.length === 1 ? 'file' : 'files'})…`, firstScreen);
+  await leaveTab();
   await vscode.commands.executeCommand('vscode.changes', title, resources);
 }
 
@@ -897,7 +900,7 @@ export async function editInEditor(file: string, initial: string, title: string)
   fs.writeFileSync(file, [initial, ...help].join('\n') + '\n');
   const uri = vscode.Uri.file(file);
   const doc = await vscode.languages.setTextDocumentLanguage(await vscode.workspace.openTextDocument(uri), 'git-commit');
-  await vscode.window.showTextDocument(doc, { preview: false });
+  await vscode.window.showTextDocument(doc, { preview: false, viewColumn: editorColumn() });
 
   await new Promise<void>((resolve) => {
     const isOurs = (tab: vscode.Tab) => tab.input instanceof vscode.TabInputText && tab.input.uri.fsPath === uri.fsPath;

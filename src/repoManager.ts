@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { setContext } from './contextKeys';
 import { buildEditorCommand, GitOps, type OpsOptions } from './git/operations';
 import { Git } from './git/runner';
 import { repoSignature } from './git/signature';
@@ -18,6 +19,10 @@ export class RepoManager implements vscode.Disposable {
   /** Fires (debounced) when the selected repository changes or its state changes. */
   readonly onDidChange = this.changeEmitter.event;
 
+  private readonly workingTreeEmitter = new vscode.EventEmitter<void>();
+  /** Fires (debounced) on every state change of the repository, edits to files included. */
+  readonly onDidChangeWorkingTree = this.workingTreeEmitter.event;
+
   constructor(
     readonly api: API,
     editorScript: string,
@@ -25,6 +30,7 @@ export class RepoManager implements vscode.Disposable {
     this.editorCommand = buildEditorCommand(process.execPath, editorScript);
     this.disposables.push(
       this.changeEmitter,
+      this.workingTreeEmitter,
       api.onDidOpenRepository(() => this.ensureRepository()),
       api.onDidCloseRepository(() => this.ensureRepository()),
       vscode.window.onDidChangeActiveTextEditor((editor) => {
@@ -70,7 +76,7 @@ export class RepoManager implements vscode.Disposable {
   }
 
   private ensureRepository(): void {
-    void vscode.commands.executeCommand('setContext', 'slothgit.multipleRepos', this.api.repositories.length > 1);
+    setContext('slothgit.multipleRepos', this.api.repositories.length > 1);
     if (this.current && this.api.repositories.includes(this.current)) return;
     const editor = vscode.window.activeTextEditor;
     const fromEditor = editor ? this.api.getRepository(editor.document.uri) : null;
@@ -83,14 +89,16 @@ export class RepoManager implements vscode.Disposable {
     this.signature = undefined;
     this.stateListener?.dispose();
     this.stateListener = repo?.state.onDidChange(() => this.scheduleChange());
-    void vscode.commands.executeCommand('setContext', 'slothgit.hasRepository', !!repo);
+    setContext('slothgit.hasRepository', !!repo);
     this.changeEmitter.fire();
   }
 
   private scheduleChange(): void {
     clearTimeout(this.debounce);
-    // The Git extension reports every change, including edits to files; SlothGit's views only show refs and history.
+    // The Git extension reports every change, including edits to files; most of SlothGit's lists only show refs
+    // and history. The Files panel listens to onDidChangeWorkingTree, which fires for every change.
     this.debounce = setTimeout(async () => {
+      this.workingTreeEmitter.fire();
       const signature = await this.currentSignature();
       if (signature !== undefined && signature === this.signature) return;
       this.changeEmitter.fire();

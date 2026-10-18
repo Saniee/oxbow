@@ -12,11 +12,12 @@ import type { BranchesProvider } from './views/branches';
 import type { FileNode, Node, RefNode, RemoteNode, WorktreeNode } from './views/nodes';
 import type { CommitsProvider } from './views/providers';
 import { learn, learnItem } from './learn';
+import { fromWebview, type ListView } from './views/webviewNodes';
 
 export interface BranchCommandDeps {
   repos: RepoManager;
   branches: BranchesProvider;
-  branchesView: vscode.TreeView<Node>;
+  branchesView: ListView;
   commits: CommitsProvider;
   runner: Runner;
 }
@@ -368,7 +369,7 @@ export function registerBranchCommands(deps: BranchCommandDeps): vscode.Disposab
       const ok = await run(`Rebasing onto ${node.name}…`, async (ops) => {
         await ops.rebaseOnto(node.rev, useBase ? base : undefined, interactive);
         if (interactive) {
-          void vscode.commands.executeCommand('slothgit.commits.focus');
+          void vscode.commands.executeCommand('slothgit.open', 'commits');
           return 'Rebase paused before the first commit. Right-click the steps at the top of the Commits view to change them, then Continue.';
         }
       });
@@ -707,5 +708,6 @@ export function registerBranchCommands(deps: BranchCommandDeps): vscode.Disposab
     },
   };
 
-  return Object.entries(commands).map(([id, handler]) => vscode.commands.registerCommand(id, handler));
+  // fromWebview: the tab's context menus pass a webview context instead of a node.
+  return Object.entries(commands).map(([id, handler]) => vscode.commands.registerCommand(id, (...args: unknown[]) => handler(...fromWebview(args))));
 }

@@ -19,13 +19,15 @@ const common = {
 };
 
 // The webview pages run in a browser inside VS Code; each one's CSS is written next to its script.
-const pages = ['graph', 'sync'].map((page) => ({
+const pages = ['graph', 'tab'].map((page) => ({
   ...common,
   platform: 'browser',
   format: 'iife',
   target: 'es2022',
   entryPoints: { [page]: `src/webview/${page}/main.ts` },
   outdir: 'dist/webview',
+  // The codicon font (imported from @vscode/codicons' CSS) is copied next to the page.
+  loader: { ...common.loader, '.ttf': 'file' },
 }));
 
 const builds = tests

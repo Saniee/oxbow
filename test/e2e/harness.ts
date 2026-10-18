@@ -8,6 +8,8 @@ import * as vscode from 'vscode';
 import type { SlothGitTestApi } from '../../src/extension';
 import type { CommitNode, FileNode, Node, RefNode, RemoteNode, SectionNode, StashNode, TodoNode, WorktreeNode } from '../../src/views/nodes';
 
+type ProviderName = keyof SlothGitTestApi['providers'];
+
 // --- scripted prompts ---------------------------------------------------------------------
 
 /** One answer to the next prompt SlothGit shows. `expect` is matched against the prompt's title or message. */
@@ -168,6 +170,17 @@ function sync(src: string, dst: string): void {
   }
 }
 
+/**
+ * Closes every editor except the SlothGit tab, and makes sure that one is open and in front: its lists only load
+ * while it is visible.
+ */
+export async function closeEditorsButTab(): Promise<void> {
+  const isTab = (tab: vscode.Tab) => tab.input instanceof vscode.TabInputWebview && tab.input.viewType.endsWith('slothgit.tab');
+  const others = vscode.window.tabGroups.all.flatMap((g) => g.tabs).filter((tab) => !isTab(tab));
+  if (others.length) await vscode.window.tabGroups.close(others);
+  await vscode.commands.executeCommand('slothgit.open');
+}
+
 // --- the test context -----------------------------------------------------------------------
 
 export class Context {
@@ -196,7 +209,7 @@ export class Context {
 
   /** Puts the playground back exactly as the snapshot, including SlothGit's in-memory state. */
   async restore(): Promise<void> {
-    await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+    await closeEditorsButTab();
     for (const id of [
       'slothgit.commits.clearFilter',
       'slothgit.commits.clearSearch',
@@ -298,14 +311,14 @@ export class Context {
 
   // --- nodes ---
 
-  private roots(provider: string): Promise<Node[]> {
+  private roots(provider: ProviderName): Promise<Node[]> {
     return Promise.resolve(this.api.providers[provider].getChildren() as Node[]);
   }
-  async children(provider: string, node: Node): Promise<Node[]> {
+  async children(provider: ProviderName, node: Node): Promise<Node[]> {
     return ((await this.api.providers[provider].getChildren(node)) ?? []) as Node[];
   }
 
-  /** Subjects of the commits selected in the Commits view, once the selection settles (reveal is async). */
+  /** Subjects of the commits selected in the Commits panel, once the selection settles (reveal is async). */
   async selectedSubjects(expected: string[]): Promise<string[]> {
     const read = () =>
       this.api.views.commits.selection.filter((n): n is CommitNode => n.kind === 'commit').map((n) => n.subject);
@@ -318,7 +331,7 @@ export class Context {
     return this.api.views.commits.selection;
   }
 
-  treeItem(provider: string, node: Node): Thenable<vscode.TreeItem> | vscode.TreeItem {
+  treeItem(provider: ProviderName, node: Node): Thenable<vscode.TreeItem> | vscode.TreeItem {
     return this.api.providers[provider].getTreeItem(node);
   }
 
@@ -338,10 +351,10 @@ export class Context {
   async todos(): Promise<TodoNode[]> {
     return (await this.roots('commits')).filter((n): n is TodoNode => n.kind === 'todo');
   }
-  async files(commit: Node, provider = 'commits'): Promise<FileNode[]> {
+  async files(commit: Node, provider: ProviderName = 'commits'): Promise<FileNode[]> {
     return (await this.children(provider, commit)) as FileNode[];
   }
-  async file(commit: Node, filePath: string, provider = 'commits'): Promise<FileNode> {
+  async file(commit: Node, filePath: string, provider: ProviderName = 'commits'): Promise<FileNode> {
     const found = (await this.files(commit, provider)).find((f) => f.pair.change.path === filePath);
     assert.ok(found, `file ${filePath} in the commit`);
     return found;

@@ -1,0 +1,41 @@
+// SlothGit's theme colours (package.json contributes.colors) and the colour each defaults to. Webviews can miss
+// colours an extension contributes (VS Code may have built a page's colour variables before they were registered),
+// so pages use these defaults as fallbacks: var(--vscode-slothgit-x, var(--vscode-<default>)).
+export const THEME_COLOR_DEFAULTS: Record<string, string> = {
+  'slothgit.panelBackground': 'sideBar.background',
+  'slothgit.panelBorder': 'panel.border',
+  'slothgit.commitMergedIcon': 'charts.green',
+  'slothgit.commitPushedIcon': 'charts.yellow',
+  'slothgit.commitUnpushedIcon': 'charts.red',
+  'slothgit.commitOtherBranchIcon': 'disabledForeground',
+  'slothgit.cherryPickedIcon': 'charts.blue',
+  'slothgit.rebaseBaseIcon': 'charts.purple',
+  'slothgit.rebaseTodoIcon': 'charts.orange',
+  'slothgit.bisectBadIcon': 'charts.red',
+  'slothgit.bisectGoodIcon': 'charts.green',
+  'slothgit.bisectSkippedIcon': 'disabledForeground',
+  'slothgit.bisectTestingIcon': 'charts.yellow',
+  'slothgit.currentBranchIcon': 'charts.green',
+  'slothgit.worktreeBranchIcon': 'charts.blue',
+  'slothgit.goneIcon': 'disabledForeground',
+  'slothgit.headRefBackground': 'charts.green',
+  'slothgit.headRefForeground': 'editor.background',
+  'slothgit.localRefForeground': 'charts.green',
+  'slothgit.remoteRefForeground': 'charts.blue',
+  'slothgit.tagRefForeground': 'charts.yellow',
+  'slothgit.stagedForeground': 'gitDecoration.addedResourceForeground',
+  'slothgit.unstagedForeground': 'gitDecoration.modifiedResourceForeground',
+  'slothgit.untrackedForeground': 'gitDecoration.untrackedResourceForeground',
+  'slothgit.conflictForeground': 'gitDecoration.conflictingResourceForeground',
+  'slothgit.graphLane1': 'charts.blue',
+  'slothgit.graphLane2': 'charts.green',
+  'slothgit.graphLane3': 'charts.orange',
+  'slothgit.graphLane4': 'charts.purple',
+  'slothgit.graphLane5': 'charts.red',
+  'slothgit.graphLane6': 'charts.yellow',
+  'slothgit.graphLane7': 'terminal.ansiCyan',
+  'slothgit.graphLane8': 'terminal.ansiMagenta',
+};
+
+/** A colour id as the CSS variable VS Code defines for it in webviews. */
+export const cssVar = (id: string): string => `--vscode-${id.replace(/\./g, '-')}`;

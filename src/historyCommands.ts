@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import * as vscode from 'vscode';
-import { fromGraph } from './views/graphPanel';
+import { setContext } from './contextKeys';
+import { fromWebview, type ListView } from './views/webviewNodes';
 import { openMultiDiff } from './commands';
 import { getCommitFiles, getCommitMessage, getOperation, rebaseTodoPath } from './git/queries';
 import { transformTodo, type TodoAction } from './git/todo';
@@ -13,7 +14,7 @@ import type { CommitsProvider } from './views/providers';
 export interface HistoryCommandDeps {
   repos: RepoManager;
   commits: CommitsProvider;
-  commitsView: vscode.TreeView<Node>;
+  commitsView: ListView;
   runner: Runner;
   refreshAll(force: boolean): Promise<void>;
 }
@@ -168,7 +169,7 @@ export function registerHistoryCommands(deps: HistoryCommandDeps): vscode.Dispos
 
     'slothgit.compare.select': (arg?: Node) => {
       compareBase = revisionOf(arg ?? commitsView.selection[0]);
-      void vscode.commands.executeCommand('setContext', 'slothgit.hasCompareBase', !!compareBase);
+      setContext('slothgit.hasCompareBase', !!compareBase);
       if (compareBase) {
         void vscode.window.showInformationMessage(
           `Selected ${compareBase.label} for comparison. Pick another commit or branch and choose "Compare with Selected".`,
@@ -186,7 +187,7 @@ export function registerHistoryCommands(deps: HistoryCommandDeps): vscode.Dispos
     },
     'slothgit.compare.clear': () => {
       compareBase = undefined;
-      void vscode.commands.executeCommand('setContext', 'slothgit.hasCompareBase', false);
+      setContext('slothgit.hasCompareBase', false);
     },
 
     'slothgit.commits.filterByFile': async () => {
@@ -207,7 +208,10 @@ export function registerHistoryCommands(deps: HistoryCommandDeps): vscode.Dispos
       }
       if (uri) await vscode.commands.executeCommand('slothgit.commits.showFileHistory', uri);
     },
-    'slothgit.commits.showFileHistory': async (uri?: vscode.Uri) => {
+    'slothgit.commits.showFileHistory': async (arg?: vscode.Uri | Node) => {
+      // A file from the Explorer or an editor, or a row of the Files panel.
+      const current = repos.repository?.rootUri;
+      const uri = arg instanceof vscode.Uri ? arg : arg?.kind === 'change' && current ? vscode.Uri.joinPath(current, arg.entry.path) : undefined;
       const target = uri ?? vscode.window.activeTextEditor?.document.uri;
       const repo = target && repos.api.getRepository(target);
       const root = repo?.rootUri;
@@ -220,7 +224,7 @@ export function registerHistoryCommands(deps: HistoryCommandDeps): vscode.Dispos
         ? target.fsPath.slice(root.fsPath.length + 1).replace(/\\/g, '/')
         : relative;
       await setView({ filterPath: rel || '.' });
-      await vscode.commands.executeCommand('slothgit.commits.focus');
+      await vscode.commands.executeCommand('slothgit.open', 'commits');
     },
     'slothgit.commits.clearFilter': () => setView({ filterPath: undefined }),
 
@@ -233,7 +237,7 @@ export function registerHistoryCommands(deps: HistoryCommandDeps): vscode.Dispos
       });
       if (query === undefined) return;
       await setView({ search: query.trim() || undefined });
-      await vscode.commands.executeCommand('slothgit.commits.focus');
+      await vscode.commands.executeCommand('slothgit.open', 'commits');
     },
     'slothgit.commits.clearSearch': () => setView({ search: undefined }),
     'slothgit.commits.showAllBranches': () => setView({ allBranches: true }),
@@ -267,6 +271,6 @@ export function registerHistoryCommands(deps: HistoryCommandDeps): vscode.Dispos
     },
   };
 
-  // fromGraph: the graph panel's context menu passes a webview context instead of a node.
-  return Object.entries(commands).map(([id, handler]) => vscode.commands.registerCommand(id, (...args: unknown[]) => handler(...fromGraph(args))));
+  // fromWebview: the tab's and the graph's context menus pass a webview context instead of a node.
+  return Object.entries(commands).map(([id, handler]) => vscode.commands.registerCommand(id, (...args: unknown[]) => handler(...fromWebview(args))));
 }

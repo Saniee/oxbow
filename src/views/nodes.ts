@@ -2,6 +2,7 @@ import * as path from 'node:path';
 import * as vscode from 'vscode';
 import type { LocalBranch, Person, RefPair, Remote, RemoteBranch, Stash, Tag, Worktree } from '../git/queries';
 import type { TodoEntry } from '../git/todo';
+import type { StatusEntry } from '../git/workingTree';
 
 export interface CommitNode {
   kind: 'commit';
@@ -83,7 +84,13 @@ export interface SectionNode {
   children: (RefNode | RemoteNode | WorktreeNode)[];
 }
 
-export type Node = CommitNode | StashNode | FileNode | RefNode | RemoteNode | SectionNode | TodoNode | WorktreeNode;
+/** An uncommitted change in the Files panel. */
+export interface ChangeNode {
+  kind: 'change';
+  entry: StatusEntry;
+}
+
+export type Node = CommitNode | StashNode | FileNode | RefNode | RemoteNode | SectionNode | TodoNode | WorktreeNode | ChangeNode;
 
 const STATUS_NAMES: Record<string, string> = {
   A: 'Added',

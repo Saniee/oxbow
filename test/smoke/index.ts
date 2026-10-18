@@ -1,5 +1,5 @@
 // Runs inside a real VS Code (see scripts/smoke.mjs). Opens the scratch repository the launcher created,
-// walks every SlothGit tree in several repository states, and checks every declared command is registered.
+// walks every SlothGit list in several repository states, and checks every declared command is registered.
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
@@ -7,8 +7,6 @@ import * as path from 'node:path';
 import * as vscode from 'vscode';
 import type { SlothGitTestApi } from '../../src/extension';
 import type { Node } from '../../src/views/nodes';
-
-const VIEWS = ['slothgit.branches', 'slothgit.commits', 'slothgit.stashes', 'slothgit.reflog'];
 
 function log(message: string): void {
   // Ends up in the launcher's console.
@@ -65,12 +63,13 @@ export async function run(): Promise<void> {
   assert.deepEqual(missing, [], `declared but not registered: ${missing.join(', ')}`);
   log(`${declared.length} commands registered`);
 
-  // Wait for the Git extension to discover the repository, then make every view visible so it loads.
+  // Wait for the Git extension to discover the repository, then open the tab: the lists load while it is visible.
   const gitApi = (await vscode.extensions.getExtension('vscode.git')!.activate()).getAPI(1);
   for (let i = 0; i < 100 && gitApi.repositories.length === 0; i++) await new Promise((r) => setTimeout(r, 100));
   assert.ok(gitApi.repositories.length > 0, 'the Git extension found the scratch repository');
-  for (const view of VIEWS) await vscode.commands.executeCommand(`${view}.focus`);
-  await vscode.commands.executeCommand('slothgit.reflog.focus');
+  await vscode.commands.executeCommand('slothgit.open');
+  for (let i = 0; i < 100 && !api.tab.renderedLists.commits; i++) await new Promise((r) => setTimeout(r, 100));
+  assert.ok(api.tab.renderedLists.commits, 'the tab drew the Commits list');
 
   // 1. Normal state.
   let s = await snapshot(api, 'normal');
@@ -81,6 +80,7 @@ export async function run(): Promise<void> {
   }
   assert.ok(has(s.stashes, 'stash') && has(s.stashes, 'file:stash'), 'stash view lists stashes and their files');
   assert.ok(has(s.reflog, 'reflog'), 'reflog view lists entries');
+  log(`tab drew ${JSON.stringify(api.tab.renderedLists)}`);
 
   // 2. File filter via the command the Explorer menu uses.
   // f2.txt is only touched by "commit 2".

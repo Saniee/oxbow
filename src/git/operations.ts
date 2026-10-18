@@ -20,6 +20,7 @@ import { Git } from './runner';
 import { REWORD_MESSAGES_FILE, transformTodo, type RebasePlan, type TodoAction } from './todo';
 import { parseFileDiff, type FileDiff } from './patch';
 import { planUndo, REDO_MARKER, UNDO_MARKER, type UndoAction, type UndoPlan } from './undo';
+import { discard, hasHead, stage, unstage, type StatusEntry } from './workingTree';
 
 const ROOT = '--root';
 
@@ -699,5 +700,35 @@ export class GitOps {
 
   async stashBranch(name: string, ref: string): Promise<void> {
     await this.git.exec(['stash', 'branch', name, ref]);
+  }
+
+  // --- working tree (the Files panel) -------------------------------------------
+
+  stage(entries: StatusEntry[]): Promise<void> {
+    return stage(this.git, entries);
+  }
+
+  unstage(entries: StatusEntry[]): Promise<void> {
+    return unstage(this.git, entries);
+  }
+
+  discard(entries: StatusEntry[], unstagedOnly = false): Promise<void> {
+    return discard(this.git, entries, unstagedOnly);
+  }
+
+  async stageAll(): Promise<void> {
+    await this.git.exec(['add', '-A']);
+  }
+
+  async unstageAll(): Promise<void> {
+    if (await hasHead(this.git)) await this.git.exec(['reset', '-q']);
+    else await this.git.exec(['rm', '-q', '-r', '--cached', '.']);
+  }
+
+  /** Every uncommitted change, untracked files included, back to HEAD (lazygit's "discard all"). */
+  async discardAll(): Promise<void> {
+    if (await hasHead(this.git)) await this.git.exec(['reset', '-q', '--hard']);
+    else await this.git.exec(['rm', '-q', '-r', '-f', '--cached', '.'], { allowedExitCodes: [128] });
+    await this.git.exec(['clean', '-f', '-d', '-q']);
   }
 }

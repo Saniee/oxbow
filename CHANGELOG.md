@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.0.0
+
+### Added
+- **The SlothGit tab:** lazygit's layout in an editor tab, in VS Code's own look and used with the mouse. Status, Files, Branches (Local, Remotes, Tags, Worktrees), Commits (Commits, Reflog) and Stash panels on the left; the panel in use gets most of the room. On the right, whatever is selected: a commit's message, details, files and coloured patch; a branch's log (open one of its commits, then go back); a stash's patch; a file's staged and unstaged changes. Below it, the **Command Log** of each action and the git commands it ran. Open it from the SlothGit icon in the Activity Bar, the button on the Source Control title bar, or **SlothGit: Open SlothGit**.
+- Right-clicking a row opens the same menus the views had. The common actions are also buttons on the row (on hover) and on each panel's title, with the rest in its **…** menu. Ctrl- and Shift-click select several rows; right-click actions then apply to all of them. Double-click opens a commit's changes, a file's diff, or checks out a branch.
+- **Files panel:** every uncommitted change with git's two status letters. Stage, unstage and discard files (asking whether to keep the staged part when a file has both) or everything, open a file or its changes, resolve conflicts in the merge editor, and **commit or amend from the commit box**. Committing goes through VS Code's Git extension, so hooks, signing and its settings apply; with nothing staged it offers to stage everything.
+- **Status panel:** what the Sync view showed (branch, upstream, ↑↓, Fetch, Pull and Push with their ⌄ menus), plus Continue / Skip / Abort while a rebase, merge, cherry-pick or revert is stopped, and Stop Bisecting.
+- Diffs and files opened from the tab open beside it, so it stays in view.
+- **Theme colours:** the tab and Commit Graph follow your colour theme, and SlothGit's own parts (commit icons, branch and tag labels, status letters, panels, graph lanes) have `slothgit.*` colour ids that themes and `workbench.colorCustomizations` can set. See the README.
+
+### Removed
+- The Sync, Branches, Commits, Reflog and Stashes views in the Source Control sidebar. Everything they did is in the SlothGit tab. SlothGit no longer hides VS Code's own **Graph** view on first start.
+
 ## 1.0.1
 
 ### Changed
