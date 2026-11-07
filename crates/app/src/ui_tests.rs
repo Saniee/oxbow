@@ -282,3 +282,21 @@ fn interactive_rebase_steps_can_be_changed_while_paused() {
     });
     assert_eq!(subjects(&repo), ["Initial commit"]);
 }
+
+#[test]
+fn long_diffs_lay_out_only_what_is_in_view_and_lock_files_start_collapsed() {
+    let repo = demo_repo();
+    let long: String = (1..=1500).map(|n| format!("row number {n}\n")).collect();
+    std::fs::write(repo.dir.join("long.txt"), &long).unwrap();
+    std::fs::write(repo.dir.join("Cargo.lock"), "[[package]]\nname = \"locked-crate\"\n").unwrap();
+    let mut h = harness(&repo.dir);
+    wait_for_text(&mut h, "long.txt");
+    h.get_by_label_contains("long.txt").click();
+    wait_for_text(&mut h, "row number 1\n");
+    // The end of the file is far below the view, so it is not laid out.
+    assert!(!shows(&h, "row number 1400"));
+
+    h.get_by_label_contains("Cargo.lock").click();
+    wait_for_text(&mut h, "(generated)");
+    assert!(!shows(&h, "locked-crate"));
+}

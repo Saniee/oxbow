@@ -164,19 +164,25 @@ fn omitted_note(ui: &mut egui::Ui, omitted: usize) {
     }
 }
 
+/// Generated files nobody reads line by line; their diffs start collapsed.
+fn is_generated(path: &str) -> bool {
+    let name = path.rsplit('/').next().unwrap_or(path);
+    name.ends_with(".lock") || matches!(name, "package-lock.json" | "pnpm-lock.yaml" | "npm-shrinkwrap.json" | "go.sum")
+}
+
 /// Files with their hunks; each file can be collapsed.
 pub fn diff_view(ui: &mut egui::Ui, files: &[DiffFile], salt: &str) {
-    let font = egui::TextStyle::Monospace.resolve(ui.style());
-    let dark = ui.visuals().dark_mode;
-    let text_color = ui.visuals().text_color();
-    let weak = ui.visuals().weak_text_color();
     for (i, file) in files.iter().enumerate() {
         let mut title = format!("{}  {}", file.status, file.path);
         if let Some(old) = &file.old_path {
             title = format!("{}  {old} ➡ {}", file.status, file.path);
         }
-        let header = RichText::new(format!("{title}   +{} −{}", file.added, file.removed)).strong();
-        egui::CollapsingHeader::new(header).id_salt((salt, i)).default_open(true).show(ui, |ui| {
+        let generated = is_generated(&file.path);
+        let mut header = format!("{title}   +{} −{}", file.added, file.removed);
+        if generated {
+            header.push_str("   (generated)");
+        }
+        egui::CollapsingHeader::new(RichText::new(header).strong()).id_salt((salt, i, &file.path)).default_open(!generated).show(ui, |ui| {
             for note in &file.notes {
                 ui.weak(note);
             }
@@ -185,23 +191,57 @@ pub fn diff_view(ui: &mut egui::Ui, files: &[DiffFile], salt: &str) {
                 return;
             }
             for hunk in &file.hunks {
-                let mut job = LayoutJob::default();
-                let fmt = |color: Color32, background: Color32| TextFormat { font_id: font.clone(), color, background, ..Default::default() };
-                job.append(&format!("{}\n", hunk.header), 0.0, fmt(theme::HUNK, Color32::TRANSPARENT));
-                for line in &hunk.lines {
-                    let num = |n: Option<u32>| n.map(|n| format!("{n:>5}")).unwrap_or_else(|| "     ".into());
-                    let (sign, bg) = match line.kind {
-                        LineKind::Added => ('+', theme::added_bg(dark)),
-                        LineKind::Removed => ('-', theme::removed_bg(dark)),
-                        LineKind::Context => (' ', Color32::TRANSPARENT),
-                        LineKind::Note => ('\\', Color32::TRANSPARENT),
-                    };
-                    job.append(&format!("{} {} ", num(line.old), num(line.new)), 0.0, fmt(weak, bg));
-                    let color = if line.kind == LineKind::Note { weak } else { text_color };
-                    job.append(&format!("{sign} {}\n", line.text), 0.0, fmt(color, bg));
-                }
-                ui.add(egui::Label::new(job).wrap_mode(egui::TextWrapMode::Extend));
+                hunk_view(ui, hunk);
             }
         });
     }
+}
+
+/// One hunk. It takes the room of all its lines, but only the lines in view are laid out and drawn, so a diff
+/// thousands of lines long scrolls as smoothly as a short one.
+fn hunk_view(ui: &mut egui::Ui, hunk: &oxbow_engine::diff::Hunk) {
+    let font = egui::TextStyle::Monospace.resolve(ui.style());
+    let row = ui.text_style_height(&egui::TextStyle::Monospace);
+    let char_width = ui.fonts_mut(|f| f.glyph_width(&font, '0'));
+    // Line numbers and sign: "{old:>5} {new:>5} + ".
+    let widest = hunk.lines.iter().map(|l| l.text.chars().count() + 14).max().unwrap_or(0).max(hunk.header.chars().count());
+    let rows = hunk.lines.len() + 1;
+    let width = (widest as f32 * char_width).max(ui.available_width());
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, rows as f32 * row), egui::Sense::hover());
+
+    let clip = ui.clip_rect();
+    if !clip.intersects(rect) {
+        return;
+    }
+    let first = (((clip.top() - rect.top()) / row).floor().max(0.0) as usize).min(rows);
+    let last = (((clip.bottom() - rect.top()) / row).ceil().max(0.0) as usize).min(rows);
+    if first >= last {
+        return;
+    }
+
+    let dark = ui.visuals().dark_mode;
+    let text_color = ui.visuals().text_color();
+    let weak = ui.visuals().weak_text_color();
+    let fmt = |color: Color32, background: Color32| TextFormat { font_id: font.clone(), color, background, ..Default::default() };
+    let mut job = LayoutJob::default();
+    for i in first..last {
+        let Some(line) = i.checked_sub(1).map(|j| &hunk.lines[j]) else {
+            job.append(&format!("{}\n", hunk.header), 0.0, fmt(theme::HUNK, Color32::TRANSPARENT));
+            continue;
+        };
+        let num = |n: Option<u32>| n.map(|n| format!("{n:>5}")).unwrap_or_else(|| "     ".into());
+        let (sign, bg) = match line.kind {
+            LineKind::Added => ('+', theme::added_bg(dark)),
+            LineKind::Removed => ('-', theme::removed_bg(dark)),
+            LineKind::Context => (' ', Color32::TRANSPARENT),
+            LineKind::Note => ('\\', Color32::TRANSPARENT),
+        };
+        job.append(&format!("{} {} ", num(line.old), num(line.new)), 0.0, fmt(weak, bg));
+        let color = if line.kind == LineKind::Note { weak } else { text_color };
+        job.append(&format!("{sign} {}\n", line.text), 0.0, fmt(color, bg));
+    }
+    let top = rect.top() + first as f32 * row;
+    let visible = egui::Rect::from_min_max(egui::pos2(rect.left(), top), egui::pos2(rect.right(), rect.top() + last as f32 * row));
+    let place = egui::UiBuilder::new().max_rect(visible).layout(egui::Layout::top_down(egui::Align::Min));
+    ui.scope_builder(place, |ui| ui.add(egui::Label::new(job).wrap_mode(egui::TextWrapMode::Extend)));
 }
