@@ -1,0 +1,11 @@
+[workspace]
+resolver = "3"
+members = ["crates/engine", "crates/app"]
+
+[workspace.package]
+edition = "2024"
+license = "GPL-3.0-only"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
