@@ -284,18 +284,22 @@ pub fn files(ui: &mut egui::Ui, snap: &Snapshot, view: &mut View, height: f32, i
             }
         },
         |ui, (view, intents)| {
-            let box_height = 96.0;
-            let list_height = (ui.available_height() - box_height).max(40.0);
-            ui.allocate_ui(egui::vec2(ui.available_width(), list_height), |ui| {
-                if snap.status.is_empty() {
-                    ui.weak("No changes");
-                    ui.allocate_space(ui.available_size());
-                    return;
-                }
-                let mono = egui::TextStyle::Monospace.resolve(ui.style());
-                virtual_rows(ui, "files", snap.status.len(), |ui, i| file_row(ui, &snap.status[i], &mono, view, intents));
+            // The commit box is laid out first, from the bottom up, and the file list takes the room left above it.
+            // The message box grows with the message up to half the section, then scrolls, so a long message
+            // (amending loads the last one) never runs over the buttons below it.
+            let message_height = message_box_height(ui, &view.commit_message, ui.available_height() * 0.5);
+            ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
+                commit_box(ui, snap, view, intents, message_height);
+                ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
+                    if snap.status.is_empty() {
+                        ui.weak("No changes");
+                        ui.allocate_space(ui.available_size());
+                        return;
+                    }
+                    let mono = egui::TextStyle::Monospace.resolve(ui.style());
+                    virtual_rows(ui, "files", snap.status.len(), |ui, i| file_row(ui, &snap.status[i], &mono, view, intents));
+                });
             });
-            commit_box(ui, snap, view, intents);
         },
     );
 }
@@ -366,12 +370,20 @@ fn file_row(ui: &mut egui::Ui, entry: &StatusEntry, mono: &egui::FontId, view: &
     });
 }
 
-fn commit_box(ui: &mut egui::Ui, snap: &Snapshot, view: &mut View, intents: &mut Vec<Intent>) {
-    ui.separator();
-    let hint = if view.amend { "New message for the last commit (empty keeps it)" } else { "Commit message (Ctrl+Enter to commit)" };
-    let edit = egui::TextEdit::multiline(&mut view.commit_message).hint_text(hint).desired_rows(3).desired_width(f32::INFINITY);
-    let response = ui.add(edit);
-    let ctrl_enter = response.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter) && i.modifiers.command);
+/// How tall the commit message box is: its text's height, at least three lines and at most `max`.
+pub(crate) fn message_box_height(ui: &egui::Ui, message: &str, max: f32) -> f32 {
+    let margins = 8.0;
+    let rows = 3.0 * ui.text_style_height(&egui::TextStyle::Body);
+    let font = egui::TextStyle::Body.resolve(ui.style());
+    let text = ui.painter().layout(message.to_owned(), font, egui::Color32::PLACEHOLDER, ui.available_width() - margins).size().y;
+    (text.max(rows) + margins).min(max.max(rows + margins))
+}
+
+/// The message box and the Commit / Amend row under it, added to a bottom-up `ui`: the row first, so it always has
+/// its place, then the message box, `message_height` tall, scrolling when the message is longer.
+fn commit_box(ui: &mut egui::Ui, snap: &Snapshot, view: &mut View, intents: &mut Vec<Intent>, message_height: f32) {
+    let message_id = ui.make_persistent_id("commit-message");
+    let ctrl_enter = ui.memory(|m| m.has_focus(message_id)) && ui.input(|i| i.key_pressed(egui::Key::Enter) && i.modifiers.command);
     ui.horizontal(|ui| {
         let staged = snap.status.iter().any(|e| e.is_staged());
         let can_amend = snap.head.is_some();
@@ -389,6 +401,20 @@ fn commit_box(ui: &mut egui::Ui, snap: &Snapshot, view: &mut View, intents: &mut
             intents.push(run(if amend { "Amending…" } else { "Committing…" }, move |g| ops::commit(g, &message, amend)));
         }
     });
+    let hint = if view.amend { "New message for the last commit (empty keeps it)" } else { "Commit message (Ctrl+Enter to commit)" };
+    // A scroll area always starts at the top of the room it's given, so it gets a rect of exactly its height first.
+    ui.allocate_ui_with_layout(egui::vec2(ui.available_width(), message_height), egui::Layout::top_down(egui::Align::Min), |ui| {
+        let scroll = egui::ScrollArea::vertical().id_salt("commit-message").auto_shrink([false, false]);
+        scroll.min_scrolled_height(message_height).max_height(message_height).show(ui, |ui| {
+            let edit = egui::TextEdit::multiline(&mut view.commit_message)
+                .id(message_id)
+                .hint_text(hint)
+                .desired_width(f32::INFINITY)
+                .min_size(egui::vec2(0.0, message_height));
+            ui.add(edit);
+        });
+    });
+    ui.separator();
 }
 
 // --- Branches --------------------------------------------------------------------------

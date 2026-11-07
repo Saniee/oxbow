@@ -238,9 +238,24 @@ fn merges_are_kept_and_guarded() {
 fn stacked_branches_move_with_update_refs() {
     let r = repo();
     r.git.run(["branch", "stacked", "HEAD~1"]).unwrap();
-    Rewrite::new(&r.git).update_refs(UpdateRefs::Always).reword(&r.find("two"), "Second").unwrap();
-    assert_eq!(r.git.run(["log", "-1", "--format=%s", "stacked~1"]).unwrap().trim(), "Second");
-    assert_eq!(r.sha("stacked"), r.sha("HEAD~1"));
+    let before = r.sha("HEAD");
+    let result = Rewrite::new(&r.git).update_refs(UpdateRefs::Always).reword(&r.find("two"), "Second");
+    if r.git.version() < (2, 38) {
+        // No --update-refs before git 2.38: Oxbow says so, and nothing is rewritten.
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("needs git 2.38"), "{err}");
+        assert_eq!(r.sha("HEAD"), before);
+    } else {
+        result.unwrap();
+        assert_eq!(r.git.run(["log", "-1", "--format=%s", "stacked~1"]).unwrap().trim(), "Second");
+        assert_eq!(r.sha("stacked"), r.sha("HEAD~1"));
+    }
+    // Never works with any git: on one without --update-refs, branches never move anyway.
+    let r = repo();
+    r.git.run(["branch", "stacked", "HEAD~1"]).unwrap();
+    let stacked = r.sha("stacked");
+    Rewrite::new(&r.git).update_refs(UpdateRefs::Never).reword(&r.find("two"), "Second").unwrap();
+    assert_eq!(r.sha("stacked"), stacked, "the stacked branch stays where it was");
 }
 
 #[test]

@@ -4,9 +4,8 @@ Ideas and follow-ups not being worked on yet.
 
 ## Updates
 
-- **Check for updates:** a button (and maybe a quiet check on start) that asks GitHub Releases for a newer version.
-  When there is one, download that platform's installer and run it: the Windows installer closes Oxbow, updates
-  it in place (same AppId) and starts it again. On Linux, point to the new AppImage or `.deb`.
+- **Updating a .deb** from Oxbow: it only links to the release now, as installing needs root (`pkexec apt
+  install`, or an apt repository so the system's updates include Oxbow).
 
 ## Releases
 

@@ -3,7 +3,7 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-use crate::git::{Exec, Git, Result};
+use crate::git::{Exec, Git, GitError, Result};
 
 const US: char = '\x1f';
 const RS: char = '\x1e';
@@ -303,10 +303,16 @@ pub struct Stash {
 
 pub fn stashes(git: &Git) -> Result<Vec<Stash>> {
     let format = format!("--format=%gd{US}%H{US}%cr{US}%gs{RS}");
-    // Exit 1 ("bad revision 'refs/stash'") while the last stash is being dropped: there are none.
-    let out = git.exec(["stash", "list", &format], Exec { allowed: &[1], ..Default::default() })?;
+    // `git stash list` checks refs/stash exists, then reads its log. When the last stash is dropped in between, it
+    // fails with "bad revision 'refs/stash'" (exit 1 in older git, 128 in newer): then there are none. Any other
+    // failure, while refs/stash is still there, is a real error.
+    let out = git.exec(["stash", "list", &format], Exec { allowed: &[1, 128], ..Default::default() })?;
     if out.code != 0 {
-        return Ok(Vec::new());
+        let gone = git.exec(["rev-parse", "-q", "--verify", "refs/stash"], Exec { allowed: &[1, 128], ..Default::default() })?.code != 0;
+        if gone {
+            return Ok(Vec::new());
+        }
+        return Err(GitError::Failed { args: vec!["stash".into(), "list".into(), format], code: out.code, stderr: out.stderr });
     }
     Ok(records(&out.stdout)
         .into_iter()

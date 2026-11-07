@@ -93,6 +93,13 @@ impl Git {
         self
     }
 
+    /// git's version as (major, minor), asked once per process: every handle runs the same git. (0, 0) when its
+    /// answer can't be read, so a feature that needs a newer git is then left out rather than assumed.
+    pub fn version(&self) -> (u32, u32) {
+        static VERSION: OnceLock<(u32, u32)> = OnceLock::new();
+        *VERSION.get_or_init(|| self.run(["--version"]).ok().and_then(|out| parse_version(&out)).unwrap_or((0, 0)))
+    }
+
     /// Whether history rewrites through this handle also move stacked branches.
     pub fn with_update_refs(mut self, mode: UpdateRefs) -> Self {
         self.update_refs = mode;
@@ -216,5 +223,25 @@ impl Git {
     /// A per-worktree file in the git directory, such as MERGE_HEAD or rebase-merge.
     pub fn git_path(&self, name: &str) -> Result<PathBuf> {
         Ok(self.git_dir()?.join(name))
+    }
+}
+
+/// (major, minor) from `git --version`: "git version 2.34.1", "git version 2.45.1.windows.1".
+fn parse_version(out: &str) -> Option<(u32, u32)> {
+    let mut numbers = out.trim().strip_prefix("git version ")?.split('.');
+    Some((numbers.next()?.parse().ok()?, numbers.next()?.parse().ok()?))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reads_gits_version() {
+        assert_eq!(parse_version("git version 2.34.1\n"), Some((2, 34)));
+        assert_eq!(parse_version("git version 2.45.1.windows.1"), Some((2, 45)));
+        assert_eq!(parse_version("git version 2.39.5 (Apple Git-154)"), Some((2, 39)));
+        assert_eq!(parse_version("not git"), None);
+        assert!(Git::new(".").version() >= (2, 0), "the installed git answers");
     }
 }

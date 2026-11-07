@@ -59,10 +59,11 @@ fn harness(path: &Path) -> Harness<'static, App> {
     Harness::builder().with_size(eframe::egui::vec2(1280.0, 820.0)).build_eframe(move |cc| App::with_prefs(cc.egui_ctx.clone(), Some(&path), crate::settings::Prefs::default(), None))
 }
 
-/// Steps the UI until `ready` holds; git runs on other threads, so this waits in real time.
+/// Steps the UI until `ready` holds; git runs on other threads, so this waits in real time. The limit is generous: a
+/// wait ends as soon as `ready` holds, and a busy CI runner (or Windows starting many git processes) can be slow.
 fn wait(h: &mut Harness<'static, App>, what: &str, ready: impl Fn(&Harness<'static, App>) -> bool) {
     let start = Instant::now();
-    while start.elapsed() < Duration::from_secs(15) {
+    while start.elapsed() < Duration::from_secs(60) {
         h.step();
         if ready(h) {
             h.step();
@@ -261,6 +262,46 @@ fn amending_starts_from_the_last_commits_message() {
 }
 
 #[test]
+fn a_long_message_scrolls_in_its_box_instead_of_covering_the_buttons() {
+    let repo = demo_repo();
+    let long: String = (1..=40).map(|i| format!("Line {i} of a long commit message\n")).collect();
+    repo.git.run(["commit", "-q", "--allow-empty", "-m", "A long message", "-m", &long]).unwrap();
+    let mut h = harness(&repo.dir);
+    wait_for_text(&mut h, "A long message");
+    h.get_by_label("Amend last commit").click();
+    wait(&mut h, "the long message in the box", |h| {
+        h.get_all_by_role(eframe::egui::accesskit::Role::MultilineTextInput).any(|n| n.accesskit_node().value().is_some_and(|v| v.contains("Line 40")))
+    });
+    h.run_steps(4);
+    // The box (whose text scrolls inside it, so its rect here is the whole text's) starts below the file list, and
+    // the buttons keep their place in the Files section, above Branches.
+    let message = h.get_by_role(eframe::egui::accesskit::Role::MultilineTextInput).rect();
+    let file = h.get_by_label_contains("notes.txt").rect();
+    let branches = h.get_by_label("Branches").rect();
+    assert!(file.bottom() <= message.top(), "the message box ({message:?}) covers the file list ({file:?})");
+    for control in ["Amend last commit", "Amend"] {
+        let button = h.get_by_label(control).rect();
+        assert!(message.top() < button.top() && button.bottom() < branches.top(), "{control:?} ({button:?}) left its place");
+    }
+}
+
+#[test]
+fn the_message_box_grows_with_the_message_up_to_its_limit() {
+    let heights = std::cell::RefCell::new(Vec::new());
+    let mut h = Harness::new_ui(|ui| {
+        let long: String = (1..=40).map(|i| format!("Line {i}\n")).collect();
+        *heights.borrow_mut() = ["", "One line", "1\n2\n3\n4\n5\n6", long.as_str()].map(|m| crate::panels::message_box_height(ui, m, 150.0)).to_vec();
+    });
+    h.run();
+    drop(h);
+    let heights = heights.into_inner();
+    let [empty, one, six, long] = heights[..] else { panic!("{heights:?}") };
+    assert_eq!(empty, one, "a short message keeps the box at three lines");
+    assert!(six > one && six < 150.0, "six lines make the box taller: {heights:?}");
+    assert_eq!(long, 150.0, "a long message stops at the limit and scrolls");
+}
+
+#[test]
 fn ctrl_click_selects_several_commits() {
     let repo = demo_repo();
     let mut h = harness(&repo.dir);
@@ -269,7 +310,8 @@ fn ctrl_click_selects_several_commits() {
     h.run_steps(2);
     h.get_by_label_contains("Initial commit").click_modifiers(eframe::egui::Modifiers::COMMAND);
     wait_for_text(&mut h, "2 selected");
-    h.get_by_label_contains("Add README").click_secondary();
+    // The commit row: the details of the two selected commits list "Add README" too, further down the tree.
+    h.get_all_by_label_contains("Add README").next().unwrap().click_secondary();
     h.run_steps(2);
     assert!(shows(&h, "Drop 2 commits…"));
     assert!(shows(&h, "Cherry-pick 2 commits onto HEAD"));

@@ -106,9 +106,19 @@ impl<'a> Rewrite<'a> {
         if self.has_merges(base)? {
             args.push("--rebase-merges".into());
         }
+        // --update-refs is git 2.38's. An older git never moves other branches, so Never needs no flag there, and
+        // Always can't be done: say so rather than leave the stacked branches behind unasked.
+        let has_update_refs = self.git.version() >= (2, 38);
         match self.update_refs {
             UpdateRefs::GitConfig => {}
+            UpdateRefs::Always if !has_update_refs => {
+                let (major, minor) = self.git.version();
+                return Err(GitError::user(format!(
+                    "Moving stacked branches needs git 2.38 or newer, and this is git {major}.{minor}. Update git, or set Move stacked branches to Never in Settings."
+                )));
+            }
             UpdateRefs::Always => args.push("--update-refs".into()),
+            UpdateRefs::Never if !has_update_refs => {}
             UpdateRefs::Never => args.push("--no-update-refs".into()),
         }
         if let Some(onto) = options.onto {

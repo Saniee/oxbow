@@ -58,6 +58,9 @@ Name: "{autodesktop}\Oxbow"; Filename: "{app}\oxbow.exe"; Tasks: desktopicon
 
 [Run]
 Filename: "{app}\oxbow.exe"; Description: "{cm:LaunchProgram,Oxbow}"; Flags: nowait postinstall skipifsilent
+; Oxbow's own updates run Setup silently with /RELAUNCH=yes (and /OPEN=<folder>) to be started again afterwards,
+; as the user and not as an administrator.
+Filename: "{app}\oxbow.exe"; Parameters: "{code:ReopenArgs}"; Flags: nowait runasoriginaluser; Check: Relaunch
 
 ; Settings and the recent projects list (%APPDATA%\Oxbow) are left in place on uninstall.
 
@@ -69,6 +72,22 @@ begin
     MsgBox('Oxbow uses Git, and Git wasn''t found on this computer.' + #13#10#13#10 +
       'Install it from https://git-scm.com before you start Oxbow.', mbInformation, MB_OK);
   Result := True;
+end;
+
+function Relaunch(): Boolean;
+begin
+  Result := CompareText(ExpandConstant('{param:relaunch|no}'), 'yes') = 0;
+end;
+
+function ReopenArgs(Param: String): String;
+var
+  Folder: String;
+begin
+  Folder := ExpandConstant('{param:open|}');
+  if Folder = '' then
+    Result := ''
+  else
+    Result := AddQuotes(Folder);
 end;
 
 function EnvironmentKey(Param: String): String;

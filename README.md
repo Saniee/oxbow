@@ -42,7 +42,7 @@ Everything SlothGit did, ported in three phases:
 - **Settings** (⚙ in the toolbar): the theme (the system's dark or light, Dark, Light, One Dark Pro, Gruvbox Dark
   or Gruvbox Light), how many commits and reflog entries to show, which branches count as main,
   branch order, whether rewrites move stacked branches (`--update-refs`), whether to ask before rewriting pushed
-  commits, and whether to refresh when files change. They're saved in `%APPDATA%\Oxbow\settings.txt` (Windows) or
+  commits, whether to refresh when files change, and updates (below). They're saved in `%APPDATA%\Oxbow\settings.txt` (Windows) or
   `~/.config/oxbow/settings.txt`, next to `recent.txt`.
 - Oxbow refreshes on its own when files in the repository change (ignored files don't count), and when its window
   gets focus. The sections on the left can be resized by dragging the handles between them; double-click one to
@@ -62,6 +62,19 @@ Oxbow runs the git that's installed, so install [Git](https://git-scm.com) first
   menu entry and icon.
 
 `SHA256SUMS` lists each file's checksum.
+
+### Updates
+
+When it starts, Oxbow asks GitHub for its newest release (Settings has **Check now**, and can turn this off).
+
+- **Bug-fix versions** (the last number changes, like 0.1.1 to 0.1.2) install on their own: the Windows installer
+  is downloaded and runs when you close Oxbow, or straight away with **Restart now**; an AppImage replaces itself,
+  and the new version starts next time. Settings can turn this off, and then they're offered like the others.
+- **Versions with new features** (0.1 to 0.2, or a new first number) are offered in the toolbar, with what's new;
+  **Update now** downloads, installs and starts the new version.
+- Every download is checked against the release's `SHA256SUMS` before it runs. Copies that can't update
+  themselves (the `.deb`, the `.zip` and `.tar.gz`, or an install for all users, which needs an administrator) are
+  told about new versions, with a link to download them or **Update now** for an all-users install.
 
 ## Layout
 

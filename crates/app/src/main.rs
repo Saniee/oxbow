@@ -8,6 +8,7 @@ mod panels;
 mod settings;
 mod start;
 mod theme;
+mod update;
 mod worker;
 
 #[cfg(test)]

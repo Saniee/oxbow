@@ -81,6 +81,7 @@ pub struct App {
     offer_init: Option<PathBuf>,
     /// A folder picked with Open folder… that is not a repository: offer to create one, without quitting.
     ask_init: Option<PathBuf>,
+    updater: crate::update::Updater,
 }
 
 impl App {
@@ -93,7 +94,13 @@ impl App {
 
     pub fn with_prefs(ctx: egui::Context, start: Option<&Path>, prefs: Prefs, prefs_path: Option<PathBuf>) -> Self {
         crate::theme::apply(&ctx, prefs.theme);
+        let mut updater = crate::update::Updater::new(ctx.clone(), prefs.auto_update);
+        // Only with a settings file: tests have none, and never reach the network.
+        if prefs.check_updates && prefs_path.is_some() {
+            updater.check(false);
+        }
         let mut app = App {
+            updater,
             ctx,
             repo: None,
             view: View::default(),
@@ -384,6 +391,7 @@ impl App {
         if prefs.theme != self.prefs.theme {
             crate::theme::apply(&self.ctx, prefs.theme);
         }
+        self.updater.auto_fixes = prefs.auto_update;
         self.prefs = prefs;
         self.update_watcher();
         if reload && let Some(repo) = &self.repo {
@@ -457,6 +465,8 @@ impl App {
             if ui.button("⚙ Settings").clicked() {
                 intents.push(Intent::Settings);
             }
+            let folder = self.repo.as_ref().map(|r| r.worker.git.root().to_owned());
+            self.updater.notice(ui, folder.as_deref());
             let Some(snap) = self.repo.as_ref().and_then(|r| r.snapshot.as_ref()) else { return };
             ui.separator();
             let busy = snap.operation.is_some() || snap.undo.rebase_in_progress;
@@ -662,6 +672,12 @@ fn init_question(ctx: &egui::Context, dir: &Path, no: &str) -> Option<bool> {
 impl eframe::App for App {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.poll();
+        let folder = self.repo.as_ref().map(|r| r.worker.git.root().to_owned());
+        self.updater.poll(folder.as_deref());
+        // Restart: the new version's install has started, and Oxbow makes way for it.
+        if std::mem::take(&mut self.updater.close) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
         // Changes made outside Oxbow (an editor, a terminal) show up when the window is focused again.
         let focused = ctx.input(|i| i.viewport().focused.unwrap_or(true));
         if focused && !self.was_focused
@@ -716,9 +732,11 @@ impl eframe::App for App {
             }
         }
         if let Some(editor) = &mut self.settings {
-            match settings::show(ui.ctx(), editor, self.prefs_path.as_deref()) {
+            let updates = (self.updater.status(), self.updater.busy());
+            match settings::show(ui.ctx(), editor, self.prefs_path.as_deref(), (&updates.0, updates.1)) {
                 settings::Outcome::Open => {}
                 settings::Outcome::Close => self.settings = None,
+                settings::Outcome::CheckForUpdates => self.updater.check(true),
                 settings::Outcome::Changed => {
                     let mut draft = editor.draft.clone();
                     // Resized while the window was open: the sizes are not the window's to change.
@@ -730,5 +748,10 @@ impl eframe::App for App {
         for intent in intents {
             self.handle(intent);
         }
+    }
+
+    fn on_exit(&mut self) {
+        // A downloaded bug-fix version installs as Oxbow closes.
+        self.updater.on_exit();
     }
 }

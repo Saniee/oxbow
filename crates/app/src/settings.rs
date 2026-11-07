@@ -20,11 +20,15 @@ pub struct Prefs {
     /// How the left column's height is shared by Files, Branches, Commits and Stash; adds up to 1.
     pub panel_sizes: [f32; 4],
     pub theme: theme::Choice,
+    /// Ask GitHub for a newer version when Oxbow starts.
+    pub check_updates: bool,
+    /// Download and install bug-fix versions (same major and minor) without asking.
+    pub auto_update: bool,
 }
 
 impl Default for Prefs {
     fn default() -> Self {
-        Self { engine: Settings::default(), confirm_rewriting_pushed: true, watch_files: true, panel_sizes: [0.34, 0.2, 0.34, 0.12], theme: theme::Choice::System }
+        Self { engine: Settings::default(), confirm_rewriting_pushed: true, watch_files: true, panel_sizes: [0.34, 0.2, 0.34, 0.12], theme: theme::Choice::System, check_updates: true, auto_update: true }
     }
 }
 
@@ -77,6 +81,8 @@ impl Prefs {
                 "update_refs" => p.engine.update_refs = UPDATE_REFS.iter().find(|s| s.1 == value).map_or(p.engine.update_refs, |s| s.0),
                 "confirm_rewriting_pushed" => p.confirm_rewriting_pushed = flag(),
                 "watch_files" => p.watch_files = flag(),
+                "check_updates" => p.check_updates = flag(),
+                "auto_update" => p.auto_update = flag(),
                 "theme" => p.theme = theme::THEMES.iter().find(|t| t.1 == value).map_or(p.theme, |t| t.0),
                 "panel_sizes" => {
                     let sizes: Vec<f32> = value.split(',').filter_map(|v| v.trim().parse().ok()).collect();
@@ -97,7 +103,8 @@ impl Prefs {
         format!(
             "# Oxbow settings. Edit here or in the app's Settings window.\n\
              commit_limit = {}\nreflog_limit = {}\nmain_branches = {}\nbranch_sort = {sort}\nupdate_refs = {update}\n\
-             confirm_rewriting_pushed = {}\nwatch_files = {}\npanel_sizes = {}\ntheme = {}\n",
+             confirm_rewriting_pushed = {}\nwatch_files = {}\npanel_sizes = {}\ntheme = {}\n\
+             check_updates = {}\nauto_update = {}\n",
             e.commit_limit,
             e.reflog_limit,
             e.main_branches.join(", "),
@@ -105,6 +112,8 @@ impl Prefs {
             bool_text(self.watch_files),
             self.panel_sizes.map(|s| format!("{s:.3}")).join(", "),
             key_of(&theme::THEMES, self.theme),
+            bool_text(self.check_updates),
+            bool_text(self.auto_update),
         )
     }
 
@@ -133,6 +142,7 @@ pub enum Outcome {
     Close,
     /// The draft changed; apply and save it.
     Changed,
+    CheckForUpdates,
 }
 
 fn combo<T: Copy + PartialEq>(ui: &mut egui::Ui, id: &str, value: &mut T, options: &[(T, &str, &str)]) -> bool {
@@ -146,9 +156,11 @@ fn combo<T: Copy + PartialEq>(ui: &mut egui::Ui, id: &str, value: &mut T, option
     *value != before
 }
 
-pub fn show(ctx: &egui::Context, editor: &mut Editor, path: Option<&Path>) -> Outcome {
+/// The Settings window. `updates`: what the last update check found, and whether one is running.
+pub fn show(ctx: &egui::Context, editor: &mut Editor, path: Option<&Path>, updates: (&str, bool)) -> Outcome {
     let mut open = true;
     let mut changed = false;
+    let mut check = false;
     egui::Window::new("Settings").open(&mut open).collapsible(false).resizable(false).default_width(460.0).show(ctx, |ui| {
         let d = &mut editor.draft;
         egui::Grid::new("settings").num_columns(2).spacing([16.0, 10.0]).show(ui, |ui| {
@@ -176,7 +188,7 @@ pub fn show(ctx: &egui::Context, editor: &mut Editor, path: Option<&Path>) -> Ou
             ui.end_row();
 
             ui.label("Move stacked branches").on_hover_text(
-                "When history is rewritten, also move other local branches that point at the rewritten commits (git rebase --update-refs). Branches checked out in another worktree are left alone.",
+                "When history is rewritten, also move other local branches that point at the rewritten commits (git rebase --update-refs, which needs git 2.38 or newer). Branches checked out in another worktree are left alone.",
             );
             changed |= combo(ui, "update_refs", &mut d.engine.update_refs, &UPDATE_REFS);
             ui.end_row();
@@ -184,6 +196,18 @@ pub fn show(ctx: &egui::Context, editor: &mut Editor, path: Option<&Path>) -> Ou
         ui.add_space(8.0);
         changed |= ui.checkbox(&mut d.confirm_rewriting_pushed, "Ask before rewriting commits that are already pushed").changed();
         changed |= ui.checkbox(&mut d.watch_files, "Refresh when files change").on_hover_text("Otherwise Oxbow refreshes when its window gets focus, or with Refresh.").changed();
+        ui.add_space(8.0);
+        ui.strong("Updates");
+        changed |= ui.checkbox(&mut d.check_updates, "Check for updates when Oxbow starts").on_hover_text("Asks GitHub for Oxbow's newest release.").changed();
+        changed |= ui
+            .checkbox(&mut d.auto_update, "Install bug-fix updates automatically")
+            .on_hover_text("Versions that only fix bugs (like 0.1.2 after 0.1.1) are downloaded on their own and installed when you close Oxbow. Versions with new features are offered first.")
+            .changed();
+        ui.horizontal(|ui| {
+            let (status, checking) = updates;
+            check = ui.add_enabled(!checking, egui::Button::new("Check now")).clicked();
+            ui.label(status);
+        });
         if let Some(path) = path {
             ui.add_space(8.0);
             ui.weak(format!("Saved in {}", path.display()));
@@ -191,6 +215,8 @@ pub fn show(ctx: &egui::Context, editor: &mut Editor, path: Option<&Path>) -> Ou
     });
     if !open {
         Outcome::Close
+    } else if check {
+        Outcome::CheckForUpdates
     } else if changed {
         Outcome::Changed
     } else {
@@ -211,6 +237,7 @@ mod tests {
         p.engine.update_refs = UpdateRefs::Always;
         p.confirm_rewriting_pushed = false;
         p.theme = theme::Choice::GruvboxDark;
+        p.auto_update = false;
         assert_eq!(Prefs::parse(&p.to_text()), p);
 
         let odd = Prefs::parse("commit_limit = lots\nnonsense\nupdate_refs = sometimes\nreflog_limit = 3\n");
