@@ -54,9 +54,12 @@ pub struct Commit {
     pub author: String,
     pub author_email: String,
     pub co_authors: Vec<Person>,
+    /// The author date as git words it ("3 days ago"), as of when it was read; see [`relative_date`].
     pub rel_date: String,
     /// Author date, ISO 8601.
     pub date: String,
+    /// Author date, Unix seconds.
+    pub author_time: i64,
     /// Committer date, Unix seconds.
     pub timestamp: i64,
     pub parents: Vec<String>,
@@ -73,15 +76,16 @@ impl Commit {
 
 const CO_AUTHORS: &str = "%(trailers:key=Co-authored-by,valueonly,unfold,separator=%x1d)";
 
-fn log_format() -> String {
-    let fields = ["%H", "%h", "%an", "%ae", "%ar", "%aI", "%ct", "%P", "%D", CO_AUTHORS, "%s"];
+/// With `decorate`, each commit's refs (%D); git looks them up for every commit, which costs time with many refs.
+fn log_format(decorate: bool) -> String {
+    let fields = ["%H", "%h", "%an", "%ae", "%ar", "%aI", "%ct", "%at", "%P", if decorate { "%D" } else { "" }, CO_AUTHORS, "%s"];
     format!("--format={}{RS}", fields.join(&US.to_string()))
 }
 
 pub fn parse_log(output: &str) -> Vec<Commit> {
     records(output)
         .into_iter()
-        .filter(|f| f.len() >= 11)
+        .filter(|f| f.len() >= 12)
         .map(|f| Commit {
             sha: f[0].to_owned(),
             short_sha: f[1].to_owned(),
@@ -90,16 +94,18 @@ pub fn parse_log(output: &str) -> Vec<Commit> {
             rel_date: f[4].to_owned(),
             date: f[5].to_owned(),
             timestamp: f[6].parse().unwrap_or(0),
-            parents: split_list(f[7], ' '),
-            refs: f[8].split(", ").filter(|s| !s.is_empty()).map(str::to_owned).collect(),
-            co_authors: split_list(f[9], GS).iter().map(|p| parse_person(p)).collect(),
-            subject: f[10].to_owned(),
+            author_time: f[7].parse().unwrap_or(0),
+            parents: split_list(f[8], ' '),
+            refs: f[9].split(", ").filter(|s| !s.is_empty()).map(str::to_owned).collect(),
+            co_authors: split_list(f[10], GS).iter().map(|p| parse_person(p)).collect(),
+            subject: f[11].to_owned(),
         })
         .collect()
 }
 
-fn run_log(git: &Git, args: &[String]) -> Result<Vec<Commit>> {
-    let mut all = vec!["log".to_owned(), log_format()];
+fn run_log(git: &Git, args: &[String], decorate: bool) -> Result<Vec<Commit>> {
+    // Paths after "--" are file names as they are, not patterns: a file named `[ab].txt` must not match a.txt.
+    let mut all = vec!["--literal-pathspecs".to_owned(), "log".to_owned(), log_format(decorate)];
     all.extend_from_slice(args);
     // 128: unborn branch (no commits yet), or a revision that doesn't exist.
     let out = git.exec(&all, Exec { allowed: &[128], ..Default::default() })?;
@@ -116,11 +122,17 @@ pub struct LogQuery {
     /// Case-insensitive text matched against the message and author, or a SHA prefix.
     pub search: Option<String>,
     pub paths: Vec<String>,
+    /// Leave `refs` empty: the caller fills them in from the refs it already has (see `Snapshot`).
+    pub undecorated: bool,
 }
 
-/// Commits newest first (date order, children before parents).
+/// Commits newest first, every commit after all of its children (`--date-order`), whatever the commit dates say: the
+/// graph depends on it. git's default order doesn't promise that: with a clock that was off, a parent can come
+/// before a child on another branch, or the child can fall past the limit while its parent is listed. With a
+/// commit-graph file (git gc writes one) git streams this order as quickly as the default one.
 pub fn log(git: &Git, query: &LogQuery) -> Result<Vec<Commit>> {
     let rev = query.rev.clone().unwrap_or_else(|| "HEAD".to_owned());
+    let decorate = !query.undecorated;
     let mut base = vec![format!("-n{}", query.limit.max(1)), "--date-order".to_owned()];
     if query.all {
         base.extend(["--branches", "--remotes", "--tags"].map(str::to_owned));
@@ -132,7 +144,7 @@ pub fn log(git: &Git, query: &LogQuery) -> Result<Vec<Commit>> {
         args
     };
     let search = query.search.as_deref().map(str::trim).filter(|s| !s.is_empty());
-    let Some(text) = search else { return run_log(git, &with_paths(base)) };
+    let Some(text) = search else { return run_log(git, &with_paths(base), decorate) };
 
     let flags = ["--regexp-ignore-case".to_owned(), "--fixed-strings".to_owned()];
     let mut by_message = base.clone();
@@ -143,15 +155,52 @@ pub fn log(git: &Git, query: &LogQuery) -> Result<Vec<Commit>> {
     by_author.push(format!("--author={text}"));
     let mut found = Vec::new();
     if text.len() >= 4 && text.chars().all(|c| c.is_ascii_hexdigit()) {
-        found.extend(run_log(git, &["-n1".to_owned(), format!("{text}^{{commit}}"), "--".to_owned()])?);
+        found.extend(run_log(git, &["-n1".to_owned(), format!("{text}^{{commit}}"), "--".to_owned()], decorate)?);
     }
-    found.extend(run_log(git, &with_paths(by_message))?);
-    found.extend(run_log(git, &with_paths(by_author))?);
+    found.extend(run_log(git, &with_paths(by_message), decorate)?);
+    found.extend(run_log(git, &with_paths(by_author), decorate)?);
     let mut seen = HashSet::new();
     found.retain(|c| seen.insert(c.sha.clone()));
-    found.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+    found.sort_by_key(|c| std::cmp::Reverse(c.timestamp));
     found.truncate(query.limit);
     Ok(found)
+}
+
+/// A past time as git words it in %ar and --date=relative ("5 minutes ago", "2 years, 3 months ago"), the same
+/// rounding included, so a list read a while ago can be brought up to date without asking git again.
+pub fn relative_date(time: i64, now: i64) -> String {
+    let plural = |n: i64, one: &str| if n == 1 { format!("{n} {one}") } else { format!("{n} {one}s") };
+    if now < time {
+        return "in the future".to_owned();
+    }
+    let mut diff = now - time;
+    if diff < 90 {
+        return format!("{} ago", plural(diff, "second"));
+    }
+    diff = (diff + 30) / 60;
+    if diff < 90 {
+        return format!("{} ago", plural(diff, "minute"));
+    }
+    diff = (diff + 30) / 60;
+    if diff < 36 {
+        return format!("{} ago", plural(diff, "hour"));
+    }
+    diff = (diff + 12) / 24;
+    if diff < 14 {
+        return format!("{} ago", plural(diff, "day"));
+    }
+    if diff < 70 {
+        return format!("{} ago", plural((diff + 3) / 7, "week"));
+    }
+    if diff < 365 {
+        return format!("{} ago", plural((diff + 15) / 30, "month"));
+    }
+    if diff < 1825 {
+        let total_months = (diff * 12 * 2 + 365) / (365 * 2);
+        let (years, months) = (total_months / 12, total_months % 12);
+        return if months > 0 { format!("{}, {} ago", plural(years, "year"), plural(months, "month")) } else { format!("{} ago", plural(years, "year")) };
+    }
+    format!("{} ago", plural((diff + 183) / 365, "year"))
 }
 
 /// The full message of a commit, without trailing whitespace.
@@ -318,6 +367,48 @@ pub fn current_branch(git: &Git) -> Result<Option<String>> {
     Ok((out.code == 0 && !name.is_empty()).then(|| name.to_owned()))
 }
 
+/// HEAD's SHA read straight from the git directory (HEAD, then the loose ref or packed-refs), without starting a
+/// git process. None when that isn't possible (no commits yet, a reftable repository, anything unusual): ask git then.
+pub fn head_from_files(git: &Git) -> Option<String> {
+    let git_dir = git.git_dir().ok()?;
+    let head = std::fs::read_to_string(git_dir.join("HEAD")).ok()?;
+    let head = head.trim();
+    let is_sha = |s: &str| (s.len() == 40 || s.len() == 64) && s.chars().all(|c| c.is_ascii_hexdigit());
+    let Some(reference) = head.strip_prefix("ref: ") else { return is_sha(head).then(|| head.to_owned()) };
+    let common = common_dir(git)?;
+    if let Ok(loose) = std::fs::read_to_string(common.join(reference)) {
+        let sha = loose.trim();
+        return is_sha(sha).then(|| sha.to_owned());
+    }
+    let packed = std::fs::read_to_string(common.join("packed-refs")).ok()?;
+    packed.lines().find_map(|l| l.split_once(' ').filter(|(sha, name)| *name == reference && is_sha(sha)).map(|(sha, _)| sha.to_owned()))
+}
+
+/// The directory with the refs and objects every worktree of the repository shares: the git directory itself,
+/// except in a linked worktree.
+fn common_dir(git: &Git) -> Option<PathBuf> {
+    let git_dir = git.git_dir().ok()?;
+    Some(match std::fs::read_to_string(git_dir.join("commondir")) {
+        Ok(rel) => git_dir.join(rel.trim()),
+        Err(_) => git_dir.to_path_buf(),
+    })
+}
+
+/// Whether the history git shows can change while every ref stays where it is: a shallow clone (fetching deeper
+/// adds history), grafts, or replace refs. A commit list must not be reused then.
+pub fn history_can_change_in_place(git: &Git) -> bool {
+    let Some(common) = common_dir(git) else { return true };
+    if common.join("shallow").exists() || common.join("info").join("grafts").exists() {
+        return true;
+    }
+    let replace_dir = common.join("refs").join("replace");
+    if std::fs::read_dir(&replace_dir).is_ok_and(|mut d| d.next().is_some()) {
+        return true;
+    }
+    // Packed replace refs. The file is read only up to its first line naming one.
+    std::fs::read_to_string(common.join("packed-refs")).is_ok_and(|p| p.contains(" refs/replace/"))
+}
+
 /// HEAD's SHA, or None before the first commit.
 pub fn head_sha(git: &Git) -> Result<Option<String>> {
     let out = git.exec(["rev-parse", "-q", "--verify", "HEAD"], Exec { allowed: &[1, 128], ..Default::default() })?;
@@ -377,6 +468,24 @@ fn same_path(a: &Path, b: &Path) -> bool {
 
 /// Local branches, the current one first.
 pub fn local_branches(git: &Git, sort: BranchSort) -> Result<Vec<LocalBranch>> {
+    let mut branches = read_local_branches(git, sort)?;
+    if sort == BranchSort::Recency {
+        let out = git.exec(["reflog", "show", "-n1000", "--format=%gs", "HEAD", "--"], Exec { allowed: &[128], ..Default::default() })?;
+        sort_by_checkouts(&mut branches, out.stdout.lines());
+    }
+    Ok(branches)
+}
+
+/// Puts the most recently checked-out branches first, from the HEAD reflog's subjects (newest first); the current
+/// branch stays on top.
+pub fn sort_by_checkouts<'a>(branches: &mut [LocalBranch], subjects: impl Iterator<Item = &'a str>) {
+    let recent = recent_checkouts(subjects);
+    let rank = |name: &str| recent.iter().position(|r| r == name).unwrap_or(usize::MAX);
+    branches.sort_by_cached_key(|b| (!b.current, rank(&b.name)));
+}
+
+/// Local branches by date or name, the current one first, without the recency order (see [`sort_by_checkouts`]).
+pub fn read_local_branches(git: &Git, sort: BranchSort) -> Result<Vec<LocalBranch>> {
     let fields = [
         "%(refname:short)",
         "%(objectname)",
@@ -416,20 +525,14 @@ pub fn local_branches(git: &Git, sort: BranchSort) -> Result<Vec<LocalBranch>> {
             }
         })
         .collect();
-    if sort == BranchSort::Recency {
-        let recent = recent_checkouts(git)?;
-        let rank = |name: &str| recent.iter().position(|r| r == name).unwrap_or(usize::MAX);
-        branches.sort_by_key(|b| rank(&b.name));
-    }
     branches.sort_by_key(|b| !b.current);
     Ok(branches)
 }
 
 /// Branch names in the order they were last checked out, most recent first.
-fn recent_checkouts(git: &Git) -> Result<Vec<String>> {
-    let out = git.exec(["reflog", "show", "-n1000", "--format=%gs", "HEAD", "--"], Exec { allowed: &[128], ..Default::default() })?;
+fn recent_checkouts<'a>(subjects: impl Iterator<Item = &'a str>) -> Vec<String> {
     let mut names: Vec<String> = Vec::new();
-    for line in out.stdout.lines() {
+    for line in subjects {
         let Some(rest) = line.strip_prefix("checkout: moving from ") else { continue };
         let Some((from, to)) = rest.split_once(" to ") else { continue };
         for name in [to, from] {
@@ -438,7 +541,7 @@ fn recent_checkouts(git: &Git) -> Result<Vec<String>> {
             }
         }
     }
-    Ok(names)
+    names
 }
 
 #[derive(Clone, Debug)]
@@ -472,13 +575,32 @@ pub struct RemoteBranch {
 }
 
 pub fn remote_branches(git: &Git, remotes: &[Remote]) -> Result<Vec<RemoteBranch>> {
+    Ok(parse_remote_branches(&read_remote_branches(git)?, remotes))
+}
+
+/// `for-each-ref refs/remotes`, for [`parse_remote_branches`]; it doesn't need the remotes, so it can run beside them.
+pub fn read_remote_branches(git: &Git) -> Result<String> {
     let fields = ["%(refname)", "%(refname:short)", "%(objectname)", "%(symref)", "%(committerdate:relative)", "%(contents:subject)"];
     let format = format!("--format={}{RS}", fields.join(&US.to_string()));
-    let out = git.run(["for-each-ref", "--sort=refname", &format, "refs/remotes"])?;
+    git.run(["for-each-ref", "--sort=refname", &format, "refs/remotes"])
+}
+
+/// The symbolic refs among the remote refs (origin/HEAD), short name and the commit they point at: not branches,
+/// but git lists them among a commit's refs.
+pub fn parse_remote_heads(out: &str) -> Vec<(String, String)> {
+    // Named in full: the short name of refs/remotes/origin/HEAD is "origin".
+    records(out)
+        .into_iter()
+        .filter(|f| !field(f, 3).is_empty())
+        .filter_map(|f| Some((field(&f, 0).strip_prefix("refs/remotes/")?.to_owned(), field(&f, 2).to_owned())))
+        .collect()
+}
+
+pub fn parse_remote_branches(out: &str, remotes: &[Remote]) -> Vec<RemoteBranch> {
     // Longest remote name first, in case one is a prefix of another.
     let mut names: Vec<&str> = remotes.iter().map(|r| r.name.as_str()).collect();
     names.sort_by_key(|n| std::cmp::Reverse(n.len()));
-    Ok(records(&out)
+    records(out)
         .into_iter()
         .filter(|f| field(f, 3).is_empty()) // origin/HEAD
         .filter_map(|f| {
@@ -493,7 +615,7 @@ pub fn remote_branches(git: &Git, remotes: &[Remote]) -> Result<Vec<RemoteBranch
                 subject: field(&f, 5).to_owned(),
             })
         })
-        .collect())
+        .collect()
 }
 
 #[derive(Clone, Debug)]
@@ -507,19 +629,31 @@ pub struct Tag {
 }
 
 pub fn tags(git: &Git) -> Result<Vec<Tag>> {
-    let fields = ["%(refname:short)", "%(objectname)", "%(*objectname)", "%(creatordate:relative)", "%(contents:subject)"];
+    let fields = ["%(refname:short)", "%(objectname)", "%(*objectname)", "%(creatordate:relative)", "%(contents:subject)", "%(*objecttype)", "%(refname)"];
     let format = format!("--format={}{RS}", fields.join(&US.to_string()));
     let out = git.run(["for-each-ref", "--sort=-creatordate", &format, "refs/tags"])?;
-    Ok(records(&out)
-        .into_iter()
+    let records = records(&out);
+    let mut tags: Vec<Tag> = records
+        .iter()
         .map(|f| Tag {
-            name: field(&f, 0).to_owned(),
-            sha: if field(&f, 2).is_empty() { field(&f, 1) } else { field(&f, 2) }.to_owned(),
-            annotated: !field(&f, 2).is_empty(),
-            rel_date: field(&f, 3).to_owned(),
-            subject: field(&f, 4).to_owned(),
+            name: field(f, 0).to_owned(),
+            sha: if field(f, 2).is_empty() { field(f, 1) } else { field(f, 2) }.to_owned(),
+            annotated: !field(f, 2).is_empty(),
+            rel_date: field(f, 3).to_owned(),
+            subject: field(f, 4).to_owned(),
         })
-        .collect())
+        .collect();
+    // %(*objectname) peels once; a tag of a tag needs peeling further (rare, so asked for only when there is one).
+    let nested: Vec<usize> = (0..records.len()).filter(|&i| field(&records[i], 5) == "tag").collect();
+    if !nested.is_empty() {
+        let mut args = vec!["rev-parse".to_owned()];
+        args.extend(nested.iter().map(|&i| format!("{}^{{}}", field(&records[i], 6))));
+        let peeled = git.run(&args)?;
+        for (&i, sha) in nested.iter().zip(peeled.lines()) {
+            tags[i].sha = sha.trim().to_owned();
+        }
+    }
+    Ok(tags)
 }
 
 #[derive(Clone, Debug)]
@@ -613,7 +747,7 @@ mod tests {
     #[test]
     fn parses_log_records() {
         let rec = |sha: &str, parents: &str, refs: &str, co: &str, subject: &str| {
-            [sha, &sha[..7], "Ada", "ada@example.com", "2 days ago", "2024-01-01T00:00:00+00:00", "1700000000", parents, refs, co, subject]
+            [sha, &sha[..7], "Ada", "ada@example.com", "2 days ago", "2024-01-01T00:00:00+00:00", "1700000000", "1699999999", parents, refs, co, subject]
                 .join("\x1f")
                 + "\x1e"
         };
@@ -628,6 +762,7 @@ mod tests {
         assert_eq!(commits[0].co_authors, [Person { name: "Bo".into(), email: "bo@x.org".into() }, Person { name: "Cy".into(), email: "".into() }]);
         assert!(commits[1].parents.is_empty());
         assert_eq!(commits[1].subject, "Root");
+        assert_eq!(commits[0].author_time, 1699999999);
     }
 
     #[test]
@@ -651,4 +786,61 @@ mod tests {
         assert_eq!(parse_person(" Ada Lovelace <ada@x.org> "), Person { name: "Ada Lovelace".into(), email: "ada@x.org".into() });
         assert_eq!(parse_person("<ada@x.org>").name, "ada@x.org");
     }
+}
+
+// --- Bisect ----------------------------------------------------------------------------
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct BisectState {
+    /// What was checked out when the bisect started (a branch name or SHA).
+    pub start: String,
+    pub bad: Option<String>,
+    pub good: Vec<String>,
+    pub skipped: Vec<String>,
+    /// The words for bad and good: "bad"/"good" unless the bisect was started with other terms.
+    pub terms: (String, String),
+    /// Commits still to look at, once there is a bad and a good commit.
+    pub remaining: Option<usize>,
+    /// About how many more steps it takes.
+    pub steps: Option<usize>,
+    /// The first bad commit, once only it is left.
+    pub culprit: Option<String>,
+    /// Its subject: it may be newer than HEAD, so not in the commit list.
+    pub culprit_subject: String,
+}
+
+/// The bisect in progress, if any.
+pub fn bisect_state(git: &Git) -> Result<Option<BisectState>> {
+    let Ok(start) = std::fs::read_to_string(git.git_path("BISECT_START")?) else { return Ok(None) };
+    let terms = std::fs::read_to_string(git.git_path("BISECT_TERMS")?).unwrap_or_default();
+    let mut words = terms.lines().filter(|l| !l.trim().is_empty()).map(|l| l.trim().to_owned());
+    let bad_term = words.next().unwrap_or_else(|| "bad".into());
+    let good_term = words.next().unwrap_or_else(|| "good".into());
+    let mut state = BisectState { start: start.trim().to_owned(), terms: (bad_term.clone(), good_term.clone()), ..Default::default() };
+    for line in git.run(["for-each-ref", "--format=%(refname) %(objectname)", "refs/bisect"])?.lines() {
+        let Some((name, sha)) = line.split_once(' ') else { continue };
+        let name = name.trim_start_matches("refs/bisect/");
+        if name == bad_term {
+            state.bad = Some(sha.to_owned());
+        } else if name.starts_with(&format!("{good_term}-")) {
+            state.good.push(sha.to_owned());
+        } else if name.starts_with("skip-") {
+            state.skipped.push(sha.to_owned());
+        }
+    }
+    if let (Some(bad), false) = (&state.bad, state.good.is_empty()) {
+        let mut args = vec!["rev-list".to_owned(), "--bisect-vars".to_owned(), bad.clone()];
+        args.extend(state.good.iter().map(|g| format!("^{g}")));
+        let out = git.exec(&args, Exec { allowed: &[1], ..Default::default() })?.stdout;
+        let var = |name: &str| out.lines().find_map(|l| l.strip_prefix(&format!("{name}=")).map(|v| v.trim_matches('\'').to_owned()));
+        // bisect_all counts the bad commit itself; only it left means it is the first bad one.
+        let all: Option<usize> = var("bisect_all").and_then(|v| v.parse().ok());
+        state.remaining = all.map(|a| a.saturating_sub(1));
+        state.steps = var("bisect_steps").and_then(|v| v.parse().ok());
+        if all == Some(1) {
+            state.culprit = Some(bad.clone());
+            state.culprit_subject = git.run(["log", "-1", "--format=%s", bad.as_str()])?.trim().to_owned();
+        }
+    }
+    Ok(Some(state))
 }

@@ -61,8 +61,16 @@ pub fn parse_status(output: &str) -> Vec<StatusEntry> {
     entries
 }
 
+/// As plain git does, status saves what it learns about files that look changed but aren't (a formatter rewrote
+/// them unchanged, a copy reset their times) back to the index, or every later status would read them all again.
+/// That takes index.lock for a moment; the file watcher sees the index change and reads the status once more, which
+/// then finds nothing to save.
 pub fn status(git: &Git) -> Result<Vec<StatusEntry>> {
-    Ok(parse_status(&git.run(["-c", "core.quotePath=false", "status", "--porcelain=v1", "-z", "--untracked-files=all"])?))
+    let out = git.exec(
+        ["-c", "core.quotePath=false", "status", "--porcelain=v1", "-z", "--untracked-files=all"],
+        Exec { env: &[("GIT_OPTIONAL_LOCKS", "1")], ..Default::default() },
+    )?;
+    Ok(parse_status(&out.stdout))
 }
 
 pub fn has_head(git: &Git) -> Result<bool> {
@@ -70,25 +78,60 @@ pub fn has_head(git: &Git) -> Result<bool> {
 }
 
 fn unique_paths(entries: &[StatusEntry]) -> Vec<String> {
-    let mut paths: Vec<String> = Vec::new();
-    for p in entries.iter().flat_map(StatusEntry::paths) {
-        if !paths.iter().any(|q| q == p) {
-            paths.push(p.to_owned());
-        }
-    }
-    paths
+    let mut seen = std::collections::HashSet::new();
+    entries.iter().flat_map(StatusEntry::paths).filter(|p| seen.insert(*p)).map(str::to_owned).collect()
 }
 
+/// The paths taken as they are: without this a file named `[ab].txt` would also match a.txt, and `*.rs` every file.
+const LITERAL: &str = "--literal-pathspecs";
+
+/// How many characters of paths go on one command line; Windows allows 32,767 for all of it.
+const MAX_CHARS: usize = 24_000;
+
 fn with_paths(args: &[&str], paths: impl IntoIterator<Item = String>) -> Vec<String> {
-    let mut all: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+    let mut all: Vec<String> = std::iter::once(LITERAL).chain(args.iter().copied()).map(str::to_owned).collect();
     all.push("--".to_owned());
     all.extend(paths);
     all
 }
 
+/// Runs a command that takes `--pathspec-from-file` with the paths on stdin: a command line can't hold thousands of
+/// paths (Windows stops at 32,767 characters).
+fn run_with_paths(git: &Git, args: &[&str], paths: Vec<String>) -> Result<()> {
+    // On the command line when they fit, so the command log shows which files.
+    if paths.iter().map(|p| p.len() + 3).sum::<usize>() <= MAX_CHARS {
+        git.run(with_paths(args, paths))?;
+        return Ok(());
+    }
+    let mut all: Vec<&str> = vec![LITERAL];
+    all.extend_from_slice(args);
+    all.extend(["--pathspec-from-file=-", "--pathspec-file-nul"]);
+    let input = paths.join("\0");
+    git.exec(&all, Exec { input: Some(&input), ..Default::default() })?;
+    Ok(())
+}
+
+/// For a command without `--pathspec-from-file` (clean): as many runs as the paths need.
+fn run_in_batches(git: &Git, args: &[&str], paths: Vec<String>) -> Result<()> {
+    let mut batch: Vec<String> = Vec::new();
+    let mut size = 0;
+    for path in paths {
+        if !batch.is_empty() && size + path.len() + 3 > MAX_CHARS {
+            git.run(with_paths(args, std::mem::take(&mut batch)))?;
+            size = 0;
+        }
+        size += path.len() + 3;
+        batch.push(path);
+    }
+    if !batch.is_empty() {
+        git.run(with_paths(args, batch))?;
+    }
+    Ok(())
+}
+
 pub fn stage(git: &Git, entries: &[StatusEntry]) -> Result<()> {
     if !entries.is_empty() {
-        git.run(with_paths(&["add", "-A"], unique_paths(entries)))?;
+        run_with_paths(git, &["add", "-A"], unique_paths(entries))?;
     }
     Ok(())
 }
@@ -99,9 +142,9 @@ pub fn unstage(git: &Git, entries: &[StatusEntry]) -> Result<()> {
     }
     // Before the first commit there is no HEAD to restore the index from.
     if has_head(git)? {
-        git.run(with_paths(&["restore", "--staged"], unique_paths(entries)))?;
+        run_with_paths(git, &["restore", "--staged"], unique_paths(entries))?;
     } else {
-        git.run(with_paths(&["rm", "-q", "-r", "--cached"], unique_paths(entries)))?;
+        run_with_paths(git, &["rm", "-q", "-r", "--cached"], unique_paths(entries))?;
     }
     Ok(())
 }
@@ -111,7 +154,7 @@ pub fn unstage(git: &Git, entries: &[StatusEntry]) -> Result<()> {
 pub fn discard(git: &Git, entries: &[StatusEntry], unstaged_only: bool) -> Result<()> {
     let (untracked, tracked): (Vec<_>, Vec<_>) = entries.iter().cloned().partition(StatusEntry::is_untracked);
     if !untracked.is_empty() {
-        git.run(with_paths(&["clean", "-f", "-q"], untracked.into_iter().map(|e| e.path)))?;
+        run_in_batches(git, &["clean", "-f", "-q"], untracked.into_iter().map(|e| e.path).collect())?;
     }
     if tracked.is_empty() {
         return Ok(());
@@ -119,7 +162,7 @@ pub fn discard(git: &Git, entries: &[StatusEntry], unstaged_only: bool) -> Resul
     if unstaged_only {
         let changed: Vec<String> = tracked.into_iter().filter(|e| e.y != ' ').map(|e| e.path).collect();
         if !changed.is_empty() {
-            git.run(with_paths(&["restore", "--worktree"], changed))?;
+            run_with_paths(git, &["restore", "--worktree"], changed)?;
         }
         return Ok(());
     }
@@ -128,13 +171,13 @@ pub fn discard(git: &Git, entries: &[StatusEntry], unstaged_only: bool) -> Resul
     let mut restore: Vec<String> = in_head.into_iter().map(|e| e.path).collect();
     restore.extend(added.iter().filter(|e| e.x == 'R').filter_map(|e| e.old_path.clone()));
     if !added.is_empty() {
-        git.run(with_paths(&["rm", "-q", "-f", "-r"], added.into_iter().map(|e| e.path)))?;
+        run_with_paths(git, &["rm", "-q", "-f", "-r"], added.into_iter().map(|e| e.path).collect())?;
     }
     if !restore.is_empty() {
         if has_head(git)? {
-            git.run(with_paths(&["restore", "--source=HEAD", "--staged", "--worktree"], restore))?;
+            run_with_paths(git, &["restore", "--source=HEAD", "--staged", "--worktree"], restore)?;
         } else {
-            git.run(with_paths(&["rm", "-q", "-f", "-r"], restore))?;
+            run_with_paths(git, &["rm", "-q", "-f", "-r"], restore)?;
         }
     }
     Ok(())

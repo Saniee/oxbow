@@ -173,5 +173,52 @@ fn command_log_lists_only_changes() {
     log.finish(id, true);
     let entries = log.entries();
     assert_eq!(entries.len(), 1);
-    assert_eq!(entries[0].commands, ["git add -A -- a.txt", "git commit --cleanup=strip -F -"]);
+    assert_eq!(entries[0].commands, ["git --literal-pathspecs add -A -- a.txt", "git commit --cleanup=strip -F -"]);
+}
+
+#[test]
+fn bisect_finds_the_first_bad_commit() {
+    let r = repo();
+    // "bug" appears in commit 6 of 10.
+    for n in 1..=10 {
+        let content = if n >= 6 { format!("{n} bug") } else { n.to_string() };
+        r.commit_file("app.txt", &content, &format!("Commit {n}"));
+    }
+    let sha = |rev: &str| r.git.run(["rev-parse", rev]).unwrap().trim().to_owned();
+    let first_bad = sha("HEAD~4");
+    assert_eq!(queries::bisect_state(&r.git).unwrap(), None);
+    ops::bisect_mark(&r.git, &sha("HEAD"), ops::BisectMark::Bad).unwrap();
+    ops::bisect_mark(&r.git, &sha("HEAD~9"), ops::BisectMark::Good).unwrap();
+    let mut rounds = 0;
+    loop {
+        let state = queries::bisect_state(&r.git).unwrap().unwrap();
+        if let Some(culprit) = state.culprit {
+            assert_eq!(culprit, first_bad);
+            break;
+        }
+        assert!(state.remaining.unwrap() > 0);
+        let bad = std::fs::read_to_string(r.dir.join("app.txt")).unwrap().contains("bug");
+        ops::bisect_mark(&r.git, &sha("HEAD"), if bad { ops::BisectMark::Bad } else { ops::BisectMark::Good }).unwrap();
+        rounds += 1;
+        assert!(rounds < 6, "bisect should take about log2(9) steps");
+    }
+    ops::bisect_reset(&r.git).unwrap();
+    assert_eq!(queries::bisect_state(&r.git).unwrap(), None);
+    assert_eq!(queries::current_branch(&r.git).unwrap().as_deref(), Some("main"));
+}
+
+#[test]
+fn worktrees_are_added_and_removed() {
+    let r = repo();
+    r.commit_file("a.txt", "a", "First");
+    let dir = r.dir.with_file_name(format!("{}-wt", r.dir.file_name().unwrap().to_string_lossy()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let path = dir.to_string_lossy().replace('\\', "/");
+    ops::worktree_add(&r.git, &path, "topic", Some("HEAD")).unwrap();
+    let trees = queries::worktrees(&r.git).unwrap();
+    assert_eq!(trees.len(), 2);
+    assert!(trees.iter().any(|w| w.branch.as_deref() == Some("topic") && !w.main));
+    ops::worktree_remove(&r.git, &path, false).unwrap();
+    assert_eq!(queries::worktrees(&r.git).unwrap().len(), 1);
+    assert!(!dir.exists());
 }

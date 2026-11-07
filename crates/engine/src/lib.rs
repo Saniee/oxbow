@@ -6,13 +6,16 @@ pub mod command_log;
 pub mod diff;
 pub mod editor;
 mod git;
+pub mod graph;
 pub mod ops;
+pub mod patch;
 pub mod queries;
 pub mod rebase;
 pub mod snapshot;
 pub mod status;
 pub mod todo;
 pub mod undo;
+pub mod watch;
 
 pub use command_log::{CommandLog, LogEntry, LogStatus};
 pub use git::{Exec, Git, GitError, Output, Result};

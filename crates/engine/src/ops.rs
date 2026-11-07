@@ -7,6 +7,13 @@ use crate::queries::{self, LocalBranch, Operation};
 // --- commits ---------------------------------------------------------------------------
 
 /// Commits the index with `message`. With `amend`, replaces HEAD instead (keeping its message when `message` is empty).
+/// `git init` in `dir`, which is created if needed; returns the new repository.
+pub fn init(dir: &std::path::Path) -> Result<Git> {
+    std::fs::create_dir_all(dir).map_err(|e| crate::git::GitError::user(format!("Could not create {}: {e}", dir.display())))?;
+    Git::new(dir).run(["init", "-q"])?;
+    Git::open(dir)
+}
+
 pub fn commit(git: &Git, message: &str, amend: bool) -> Result<()> {
     let message = message.trim();
     let mut args = vec!["commit"];
@@ -259,5 +266,62 @@ pub fn skip_operation(git: &Git, op: Operation) -> Result<()> {
 
 pub fn abort_operation(git: &Git, op: Operation) -> Result<()> {
     git.run([op.name(), "--abort"])?;
+    Ok(())
+}
+
+// --- Bisect ----------------------------------------------------------------------------
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BisectMark {
+    Bad,
+    Good,
+    Skip,
+}
+
+/// Marks `sha`, starting a bisect first if none is going. git then checks out the next commit to test.
+pub fn bisect_mark(git: &Git, sha: &str, mark: BisectMark) -> Result<()> {
+    let state = crate::queries::bisect_state(git)?;
+    if state.is_none() {
+        git.run(["bisect", "start"])?;
+    }
+    let (bad, good) = state.map(|s| s.terms).unwrap_or_else(|| ("bad".into(), "good".into()));
+    let term = match mark {
+        BisectMark::Bad => bad,
+        BisectMark::Good => good,
+        BisectMark::Skip => "skip".into(),
+    };
+    git.run(["bisect", term.as_str(), sha])?;
+    Ok(())
+}
+
+/// Ends the bisect and checks out what was checked out before it.
+pub fn bisect_reset(git: &Git) -> Result<()> {
+    git.run(["bisect", "reset"])?;
+    Ok(())
+}
+
+// --- Worktrees -------------------------------------------------------------------------
+
+/// Adds a worktree at `dir` with `branch` checked out; with `new_from`, `branch` is created there first.
+pub fn worktree_add(git: &Git, dir: &str, branch: &str, new_from: Option<&str>) -> Result<()> {
+    match new_from {
+        Some(start) => git.run(["worktree", "add", "-b", branch, dir, start])?,
+        None => git.run(["worktree", "add", dir, branch])?,
+    };
+    Ok(())
+}
+
+pub fn worktree_remove(git: &Git, dir: &str, force: bool) -> Result<()> {
+    if force {
+        git.run(["worktree", "remove", "--force", dir])?;
+    } else {
+        git.run(["worktree", "remove", dir])?;
+    }
+    Ok(())
+}
+
+/// Forgets worktrees whose folder is gone.
+pub fn worktree_prune(git: &Git) -> Result<()> {
+    git.run(["worktree", "prune"])?;
     Ok(())
 }

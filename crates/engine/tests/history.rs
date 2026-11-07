@@ -276,3 +276,90 @@ fn undo_and_redo() {
     undo::apply(&r.git, &action, false).unwrap();
     assert_eq!(queries::current_branch(&r.git).unwrap().as_deref(), Some("main"));
 }
+
+// --- Custom patches ----------------------------------------------------------------------
+
+use oxbow_engine::patch::{self, Picks};
+use oxbow_engine::rebase::PatchTarget;
+
+/// A commit "edit" on top of `repo()` that changes notes.txt in two places and adds extra.txt.
+fn patch_repo() -> (TempRepo, String) {
+    let r = repo();
+    r.commit_file("notes.txt", "a\nb\nc\nd\ne\nf\ng\nh\n", "Add notes");
+    r.write("notes.txt", "a\nB\nc\nd\ne\nf\ng\nH\n");
+    r.write("extra.txt", "x\n");
+    r.git.run(["add", "."]).unwrap();
+    ops::commit(&r.git, "edit", false).unwrap();
+    let sha = r.sha("HEAD");
+    (r, sha)
+}
+
+/// The removal patch for the lines of `path` in `sha` whose text is in `texts` (added or removed lines).
+fn removal(r: &TempRepo, sha: &str, path: &str, texts: &[&str]) -> String {
+    let diff = queries::commit_patch(&r.git, sha, Some(&format!("{sha}^"))).unwrap();
+    let files = oxbow_engine::diff::parse_diff(&diff);
+    let file = files.iter().find(|f| f.path == path).unwrap();
+    let mut picks = Picks::new();
+    for (h, hunk) in file.hunks.iter().enumerate() {
+        for (i, line) in hunk.lines.iter().enumerate() {
+            if line.kind != oxbow_engine::diff::LineKind::Context && texts.contains(&line.text.as_str()) {
+                picks.insert((h, i));
+            }
+        }
+    }
+    patch::removal_patch(file, &picks).unwrap().unwrap()
+}
+
+fn show(r: &TempRepo, rev_path: &str) -> String {
+    r.git.run(["show", rev_path]).unwrap()
+}
+
+#[test]
+fn lines_are_taken_out_of_a_commit() {
+    let (r, sha) = patch_repo();
+    let p = removal(&r, &sha, "notes.txt", &["H"]);
+    Rewrite::new(&r.git).remove_patch(&sha, &p, &PatchTarget::Discard).unwrap();
+    // The other change and the other file stay.
+    assert_eq!(show(&r, "HEAD:notes.txt"), "a\nB\nc\nd\ne\nf\ng\nh\n");
+    assert_eq!(show(&r, "HEAD:extra.txt"), "x\n");
+    assert_eq!(r.subjects()[0], "edit");
+    assert_eq!(r.operation(), None);
+}
+
+#[test]
+fn lines_taken_out_can_go_to_the_working_tree_or_a_new_commit() {
+    let (r, sha) = patch_repo();
+    let p = removal(&r, &sha, "notes.txt", &["B"]);
+    Rewrite::new(&r.git).remove_patch(&sha, &p, &PatchTarget::WorkingTree).unwrap();
+    assert_eq!(show(&r, "HEAD:notes.txt"), "a\nb\nc\nd\ne\nf\ng\nH\n");
+    assert_eq!(std::fs::read_to_string(r.dir.join("notes.txt")).unwrap(), "a\nB\nc\nd\ne\nf\ng\nH\n");
+
+    r.git.run(["checkout", "--", "notes.txt"]).unwrap();
+    let sha = r.sha("HEAD");
+    let p = removal(&r, &sha, "extra.txt", &["x"]);
+    Rewrite::new(&r.git).remove_patch(&sha, &p, &PatchTarget::NewCommit("Add extra".into())).unwrap();
+    assert_eq!(r.subjects()[..2], ["Add extra", "edit"]);
+    assert!(!r.files_in("HEAD~1").contains(&"extra.txt".to_owned()));
+    assert_eq!(r.files_in("HEAD"), ["extra.txt"]);
+}
+
+#[test]
+fn lines_move_into_an_older_commit() {
+    let (r, sha) = patch_repo();
+    let p = removal(&r, &sha, "notes.txt", &["H", "h"]);
+    Rewrite::new(&r.git).move_patch(&sha, &p, &r.find("Add notes")).unwrap();
+    assert_eq!(r.subjects()[..2], ["edit", "Add notes"]);
+    assert_eq!(show(&r, "HEAD~1:notes.txt"), "a\nb\nc\nd\ne\nf\ng\nH\n");
+    assert_eq!(show(&r, "HEAD:notes.txt"), "a\nB\nc\nd\ne\nf\ng\nH\n");
+    assert_eq!(r.operation(), None);
+}
+
+#[test]
+fn a_patch_applies_to_the_working_tree_both_ways() {
+    let (r, sha) = patch_repo();
+    let p = removal(&r, &sha, "notes.txt", &["B"]);
+    Rewrite::new(&r.git).apply_patch(&sha, &p, true).unwrap();
+    assert_eq!(std::fs::read_to_string(r.dir.join("notes.txt")).unwrap(), "a\nb\nc\nd\ne\nf\ng\nH\n");
+    Rewrite::new(&r.git).apply_patch(&sha, &p, false).unwrap();
+    assert_eq!(std::fs::read_to_string(r.dir.join("notes.txt")).unwrap(), "a\nB\nc\nd\ne\nf\ng\nH\n");
+}

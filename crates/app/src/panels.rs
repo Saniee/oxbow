@@ -5,11 +5,11 @@ use eframe::egui::{self, RichText};
 use oxbow_engine::ops::{self, ResetMode, StashKind};
 use oxbow_engine::queries::{LocalBranch, Operation, RemoteBranch, Stash, Tag};
 use oxbow_engine::status::{self, StatusEntry};
-use oxbow_engine::rebase::Rewrite;
+use oxbow_engine::rebase::{PatchTarget, Rewrite};
 use oxbow_engine::todo::{Direction, StepKind, TodoAction, TodoPlan};
 use oxbow_engine::{CommitMark, Snapshot};
 
-use crate::app::Intent;
+use crate::app::{CherryPicks, Intent};
 use crate::detail::{Request, Selection};
 use crate::dialogs::{self, Dialog};
 use crate::theme;
@@ -40,7 +40,13 @@ pub struct View {
     pub commits_tab: CommitsTab,
     pub search: String,
     /// Commits picked with Ctrl- and Shift-click, the selected one included.
-    pub selected_commits: Vec<String>,
+    pub selected_commits: std::collections::HashSet<String>,
+    /// From the preferences, refreshed every frame.
+    pub confirm_rewriting_pushed: bool,
+    /// Commits copied for cherry-picking, oldest first (the order they are applied in): SHA and subject.
+    pub cherry_picks: Vec<(String, String)>,
+    /// Lines picked for a custom patch.
+    pub picking: crate::detail::Picking,
 }
 
 /// A menu entry that pushes an intent and closes the menu.
@@ -82,6 +88,20 @@ pub fn section<S>(
             });
             ui.separator();
             body(ui, state);
+        });
+    });
+}
+
+/// A scrolling list of `count` one-line rows of which only those in view are built, so a list of thousands (files,
+/// branches, tags) costs no more per frame than a short one.
+fn virtual_rows(ui: &mut egui::Ui, salt: &str, count: usize, mut row: impl FnMut(&mut egui::Ui, usize)) {
+    let height = ui.spacing().interact_size.y;
+    egui::ScrollArea::vertical().id_salt(salt).auto_shrink([false, false]).show_rows(ui, height, count, |ui, range| {
+        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
+        ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
+            for i in range {
+                row(ui, i);
+            }
         });
     });
 }
@@ -161,6 +181,9 @@ pub fn status(ui: &mut egui::Ui, snap: &Snapshot, root: &str, running: Option<&s
             ui.weak(title);
         }
     });
+    if let Some(b) = &snap.bisect {
+        bisect_banner(ui, snap, b, intents);
+    }
     if let Some(op) = snap.operation {
         ui.horizontal_wrapped(|ui| {
             ui.colored_label(theme::CONFLICT, format!("{} in progress", capitalize(op.name())));
@@ -186,6 +209,48 @@ pub fn status(ui: &mut egui::Ui, snap: &Snapshot, root: &str, running: Option<&s
     }
 }
 
+fn short(sha: &str) -> &str {
+    &sha[..sha.len().min(7)]
+}
+
+fn bisect_banner(ui: &mut egui::Ui, snap: &Snapshot, b: &oxbow_engine::queries::BisectState, intents: &mut Vec<Intent>) {
+    let (bad, good) = (&b.terms.0, &b.terms.1);
+    ui.horizontal_wrapped(|ui| {
+        ui.colored_label(theme::HUNK, "Bisecting");
+        match (&b.culprit, &b.bad, b.good.is_empty()) {
+            (Some(c), _, _) => {
+                let found = ui.link(format!("First {bad} commit: {} {}", short(c), b.culprit_subject));
+                if found.clicked() {
+                    intents.push(Intent::Select(Selection::Commit(c.clone()), Request::Rev(c.clone())));
+                }
+            }
+            (None, None, _) => {
+                ui.weak(format!("mark a commit that is {bad}"));
+            }
+            (None, Some(_), true) => {
+                ui.weak(format!("now mark a commit that is {good}"));
+            }
+            (None, Some(_), false) => {
+                let steps = b.steps.map(|s| format!(", about {}", plural(s.max(1), "step"))).unwrap_or_default();
+                ui.weak(format!("{} left to check{steps}. Test the checked-out commit, then mark it.", plural(b.remaining.unwrap_or(0), "commit")));
+            }
+        }
+        if b.culprit.is_none()
+            && let Some(head) = snap.head.clone()
+        {
+            for (label, mark) in [(bad.as_str(), ops::BisectMark::Bad), (good.as_str(), ops::BisectMark::Good), ("skip", ops::BisectMark::Skip)] {
+                // HEAD rather than the SHA shown: a second click before the panels catch up marks the right commit.
+                if ui.small_button(capitalize(label)).on_hover_text(format!("Marks the checked-out commit {} as {label}", short(&head))).clicked() {
+                    intents.push(run("Bisecting…", move |g| ops::bisect_mark(g, "HEAD", mark)));
+                }
+            }
+        }
+        if ui.small_button("End bisect").on_hover_text(format!("git bisect reset: back to {}", b.start)).clicked() {
+            intents.push(run("Ending the bisect…", ops::bisect_reset));
+        }
+    });
+}
+
 fn capitalize(s: &str) -> String {
     let mut c = s.chars();
     c.next().map(|f| f.to_uppercase().collect::<String>() + c.as_str()).unwrap_or_default()
@@ -201,18 +266,20 @@ pub fn files(ui: &mut egui::Ui, snap: &Snapshot, view: &mut View, height: f32, i
         height,
         &mut (view, intents),
         |ui, (_, intents)| {
-            let all = snap.status.clone();
             ui.menu_button("Stash ⏷", |ui| {
                 stash_item(ui, "Stash changes…", StashKind::Tracked, intents);
                 stash_item(ui, "Stash including untracked…", StashKind::IncludeUntracked, intents);
                 stash_item(ui, "Stash staged changes…", StashKind::Staged, intents);
             });
-            let unstage: Vec<StatusEntry> = all.iter().filter(|e| e.is_staged()).cloned().collect();
-            if ui.add_enabled(!unstage.is_empty(), egui::Button::new("Unstage all")).clicked() {
+            // The lists are made only when clicked: copying thousands of entries every frame adds up.
+            let any_staged = snap.status.iter().any(|e| e.is_staged());
+            if ui.add_enabled(any_staged, egui::Button::new("Unstage all")).clicked() {
+                let unstage: Vec<StatusEntry> = snap.status.iter().filter(|e| e.is_staged()).cloned().collect();
                 intents.push(run("Unstaging all…", move |g| status::unstage(g, &unstage)));
             }
-            let stage: Vec<StatusEntry> = all.iter().filter(|e| e.is_unstaged() || e.is_conflict()).cloned().collect();
-            if ui.add_enabled(!stage.is_empty(), egui::Button::new("Stage all")).clicked() {
+            let any_unstaged = snap.status.iter().any(|e| e.is_unstaged() || e.is_conflict());
+            if ui.add_enabled(any_unstaged, egui::Button::new("Stage all")).clicked() {
+                let stage: Vec<StatusEntry> = snap.status.iter().filter(|e| e.is_unstaged() || e.is_conflict()).cloned().collect();
                 intents.push(run("Staging all…", move |g| status::stage(g, &stage)));
             }
         },
@@ -225,12 +292,8 @@ pub fn files(ui: &mut egui::Ui, snap: &Snapshot, view: &mut View, height: f32, i
                     ui.allocate_space(ui.available_size());
                     return;
                 }
-                rows(ui, "files", |ui| {
-                    let mono = egui::TextStyle::Monospace.resolve(ui.style());
-                    for entry in &snap.status {
-                        file_row(ui, entry, &mono, view, intents);
-                    }
-                });
+                let mono = egui::TextStyle::Monospace.resolve(ui.style());
+                virtual_rows(ui, "files", snap.status.len(), |ui, i| file_row(ui, &snap.status[i], &mono, view, intents));
             });
             commit_box(ui, snap, view, intents);
         },
@@ -352,25 +415,16 @@ pub fn branches(ui: &mut egui::Ui, snap: &Snapshot, view: &mut View, height: f32
                 ui.selectable_value(&mut view.branches_tab, BranchesTab::Worktrees, format!("Worktrees ({})", snap.worktrees.len()));
             });
             match view.branches_tab {
-                BranchesTab::Local => rows(ui, "local", |ui| {
-                    for b in &snap.local_branches {
-                        local_row(ui, snap, b, view, intents);
-                    }
-                }),
-                BranchesTab::Remotes => rows(ui, "remotes", |ui| {
-                    if snap.remote_branches.is_empty() {
-                        ui.weak(if snap.remotes.is_empty() { "No remotes" } else { "No remote branches; try Fetch" });
-                    }
-                    for b in &snap.remote_branches {
-                        remote_row(ui, snap, b, view, intents);
-                    }
-                }),
-                BranchesTab::Tags => rows(ui, "tags", |ui| {
-                    for t in &snap.tags {
-                        tag_row(ui, snap, t, view, intents);
-                    }
-                }),
+                BranchesTab::Local => virtual_rows(ui, "local", snap.local_branches.len(), |ui, i| local_row(ui, snap, &snap.local_branches[i], view, intents)),
+                BranchesTab::Remotes if snap.remote_branches.is_empty() => {
+                    ui.weak(if snap.remotes.is_empty() { "No remotes" } else { "No remote branches; try Fetch" });
+                }
+                BranchesTab::Remotes => virtual_rows(ui, "remotes", snap.remote_branches.len(), |ui, i| remote_row(ui, snap, &snap.remote_branches[i], view, intents)),
+                BranchesTab::Tags => virtual_rows(ui, "tags", snap.tags.len(), |ui, i| tag_row(ui, snap, &snap.tags[i], view, intents)),
                 BranchesTab::Worktrees => rows(ui, "worktrees", |ui| {
+                    if snap.worktrees.iter().any(|w| w.prunable) && ui.button("Prune worktrees whose folder is gone").clicked() {
+                        intents.push(run("Pruning worktrees…", ops::worktree_prune));
+                    }
                     for w in &snap.worktrees {
                         let mut text = w.path.display().to_string();
                         if let Some(b) = &w.branch {
@@ -382,13 +436,46 @@ pub fn branches(ui: &mut egui::Ui, snap: &Snapshot, view: &mut View, height: f32
                         if w.locked {
                             text.push_str("  (locked)");
                         }
+                        if w.prunable {
+                            text.push_str("  (folder gone)");
+                        }
                         let r = ui.selectable_label(w.current, text);
-                        r.context_menu(|ui| copy_item(ui, "Copy path", &w.path.display().to_string()));
+                        if r.double_clicked() && !w.current && !w.prunable {
+                            intents.push(Intent::OpenRepo(Some(w.path.clone())));
+                        }
+                        r.context_menu(|ui| {
+                            if !w.current && !w.prunable {
+                                let path = w.path.clone();
+                                item(ui, "Open in Oxbow", intents, || Intent::OpenRepo(Some(path)));
+                            }
+                            copy_item(ui, "Copy path", &w.path.display().to_string());
+                            if !w.main && !w.current {
+                                ui.separator();
+                                let dir = w.path.display().to_string();
+                                let title = format!("Remove the worktree at {dir}?");
+                                item(ui, "Remove…", intents, || {
+                                    Intent::Dialog(dialogs::confirm(
+                                        title,
+                                        "Its folder is deleted; its branch stays. git refuses if it has uncommitted changes.",
+                                        "Remove",
+                                        action("Removing the worktree…", move |g| ops::worktree_remove(g, &dir, false)),
+                                    ))
+                                });
+                            }
+                        });
                     }
                 }),
             }
         },
     );
+}
+
+/// A folder beside the main worktree: `<repo>-<branch>`.
+fn suggested_worktree_dir(snap: &Snapshot, branch: &str) -> String {
+    let Some(main) = snap.worktrees.iter().find(|w| w.main) else { return String::new() };
+    let name = main.path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let safe: String = branch.chars().map(|c| if c.is_alphanumeric() || c == '-' || c == '_' || c == '.' { c } else { '-' }).collect();
+    main.path.with_file_name(format!("{name}-{safe}")).display().to_string()
 }
 
 fn new_branch_dialog(start: &str, suggested: &str) -> Intent {
@@ -462,6 +549,15 @@ fn local_row(ui: &mut egui::Ui, snap: &Snapshot, b: &LocalBranch, view: &View, i
             item(ui, &format!("Rebase {cur} onto this"), intents, || run(&format!("Rebasing onto {n}…"), move |g| ops::rebase_onto(g, &n)));
             let n = name.clone();
             item(ui, &format!("Rebase {cur} onto this interactively"), intents, || run(&format!("Rebasing onto {n}…"), move |g| Rewrite::new(g).rebase_interactive(&n)));
+        }
+        if !b.current && b.worktree.is_none() {
+            let n = name.clone();
+            let dir = suggested_worktree_dir(snap, &n);
+            item(ui, "Check out in a new worktree…", intents, || {
+                Intent::Dialog(dialogs::prompt(format!("New worktree for {n}"), "Folder for the worktree", dir, move |dir, _| {
+                    action("Adding a worktree…", move |g| ops::worktree_add(g, &dir, &n, None))
+                }))
+            });
         }
         if b.upstream.is_some() && b.behind > 0 && b.ahead == 0 {
             let br = b.clone();
@@ -616,14 +712,22 @@ pub fn commits(ui: &mut egui::Ui, snap: &Snapshot, view: &mut View, height: f32,
                     if !snap.todo.is_empty() {
                         todo_steps(ui, snap, intents);
                     }
+                    if !view.cherry_picks.is_empty() {
+                        cherry_pick_bar(ui, snap, view, intents);
+                    }
+                    if view.picking.patch.is_some() {
+                        patch_bar(ui, snap, view, intents);
+                    }
                     if snap.commits.is_empty() {
                         ui.weak(if view.search.is_empty() { "No commits yet" } else { "Nothing found" });
                         return;
                     }
+                    // Very wide graphs are cut off rather than pushing the text out of view.
+                    let lanes = snap.graph.iter().map(|r| r.width).max().unwrap_or(0).min(MAX_LANES);
                     egui::ScrollArea::vertical().id_salt("commits").auto_shrink([false, false]).show_rows(ui, row_height, snap.commits.len(), |ui, range| {
                         ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
                             for i in range {
-                                commit_row(ui, snap, i, view, intents);
+                                commit_row(ui, snap, i, lanes, view, intents);
                             }
                         });
                     });
@@ -655,6 +759,91 @@ pub fn commits(ui: &mut egui::Ui, snap: &Snapshot, view: &mut View, height: f32,
             }
         },
     );
+}
+
+/// The custom patch: what is in it, and what to do with it.
+fn patch_bar(ui: &mut egui::Ui, snap: &Snapshot, view: &View, intents: &mut Vec<Intent>) {
+    let Some(p) = &view.picking.patch else { return };
+    let source = snap.commits.iter().position(|c| c.sha == p.sha);
+    ui.horizontal(|ui| {
+        let files = p.files.keys().cloned().collect::<Vec<_>>().join("\n");
+        let what = format!("Patch: {} in {} from {}", plural(p.lines(), "line"), plural(p.files.len(), "file"), short(&p.sha));
+        ui.colored_label(theme::HUNK, what).on_hover_text(format!("{}\n\n{files}", p.subject));
+        let cx = Cx { snap, confirm: view.confirm_rewriting_pushed };
+        let removal = p.removal();
+        let (sha, subject) = (p.sha.clone(), p.subject.clone());
+        ui.menu_button("Use it ⏷", |ui| {
+            let busy = snap.operation.is_some();
+            let Ok(removal) = removal else {
+                ui.colored_label(theme::CONFLICT, removal.err().unwrap_or_default());
+                return;
+            };
+            match source {
+                Some(index) if !busy => {
+                    let targets = [
+                        ("Take it out of the commit", "The lines are removed from the commit. Undo brings them back.", PatchTarget::Discard),
+                        ("Move it to the working tree", "The lines leave the commit and become uncommitted changes.", PatchTarget::WorkingTree),
+                    ];
+                    for (label, hover, target) in targets {
+                        let (s, r) = (sha.clone(), removal.clone());
+                        let task: Task = Box::new(move |g| Rewrite::new(g).remove_patch(&s, &r, &target));
+                        if ui.button(label).on_hover_text(hover).clicked() {
+                            ui.close();
+                            intents.push(rewrite(cx, index, "Taking the lines out of the commit…", None, task));
+                        }
+                    }
+                    let (s, r) = (sha.clone(), removal.clone());
+                    let suggested = format!("Split out of \"{subject}\"");
+                    if ui.button("Move it into a new commit…").on_hover_text("Right after the commit it comes from").clicked() {
+                        ui.close();
+                        intents.push(Intent::Dialog(dialogs::prompt("Move the patch into a new commit", "Message for the new commit", suggested, move |message, _| {
+                            action("Splitting the commit…", move |g| Rewrite::new(g).remove_patch(&s, &r, &PatchTarget::NewCommit(message)))
+                        })));
+                    }
+                    ui.weak("To move it into another commit, right-click that commit.");
+                    ui.separator();
+                }
+                Some(_) => {
+                    ui.add_enabled(false, egui::Button::new("Finish what is in progress to change commits"));
+                    ui.separator();
+                }
+                None => {
+                    ui.weak("Its commit is not on the current branch: it can only be applied.");
+                    ui.separator();
+                }
+            }
+            for (label, reverse) in [("Apply it to the working tree", false), ("Revert it in the working tree", true)] {
+                let (s, r) = (sha.clone(), removal.clone());
+                if ui.button(label).clicked() {
+                    ui.close();
+                    intents.push(run("Applying the patch…", move |g| Rewrite::new(g).apply_patch(&s, &r, reverse)));
+                }
+            }
+        });
+        if ui.small_button("Clear").clicked() {
+            intents.push(Intent::ClearPatch);
+        }
+    });
+    ui.separator();
+}
+
+/// The commits copied for cherry-picking, with Paste and Clear.
+fn cherry_pick_bar(ui: &mut egui::Ui, snap: &Snapshot, view: &View, intents: &mut Vec<Intent>) {
+    ui.horizontal(|ui| {
+        let n = view.cherry_picks.len();
+        let list = view.cherry_picks.iter().map(|(sha, subject)| format!("{} {subject}", short(sha))).collect::<Vec<_>>().join("\n");
+        ui.colored_label(theme::HUNK, format!("{} copied", plural(n, "commit"))).on_hover_text(list);
+        let paste = ui.add_enabled(snap.operation.is_none(), egui::Button::new("Paste onto HEAD").small());
+        if paste.on_hover_text("Cherry-picks them, oldest first").clicked() {
+            let shas: Vec<String> = view.cherry_picks.iter().map(|(s, _)| s.clone()).collect();
+            intents.push(run(&format!("Cherry-picking {}…", plural(n, "commit")), move |g| ops::cherry_pick(g, &shas)));
+            intents.push(Intent::CherryPicks(CherryPicks::Clear));
+        }
+        if ui.small_button("Clear").clicked() {
+            intents.push(Intent::CherryPicks(CherryPicks::Clear));
+        }
+    });
+    ui.separator();
 }
 
 /// The steps a paused interactive rebase still has to apply, newest on top like the commits below them.
@@ -729,7 +918,19 @@ fn reset_hard_dialog(sha: String) -> Intent {
 
 /// How many of the commits a rewrite changes, from `oldest` (an index in the commit list) up to HEAD, are already
 /// pushed or on a main branch.
-fn published(snap: &Snapshot, oldest: usize) -> usize {
+/// What a history rewrite needs to know to decide whether to ask first.
+#[derive(Clone, Copy)]
+struct Cx<'a> {
+    snap: &'a Snapshot,
+    /// Ask before rewriting published commits.
+    confirm: bool,
+}
+
+fn published(cx: Cx, oldest: usize) -> usize {
+    if !cx.confirm {
+        return 0;
+    }
+    let snap = cx.snap;
     let end = (oldest + 1).min(snap.commits.len());
     snap.commits[..end].iter().filter(|c| snap.mark(&c.sha) != CommitMark::Unpushed).count()
 }
@@ -745,8 +946,8 @@ type Task = Box<dyn FnOnce(&oxbow_engine::Git) -> oxbow_engine::Result<()> + Sen
 
 /// Runs a history rewrite that changes the commits from index `oldest` up to HEAD. Asks first when some of them are
 /// published, or when `ask` gives a reason (title, body, button).
-fn rewrite(snap: &Snapshot, oldest: usize, title: &str, ask: Option<(String, String, &str)>, task: Task) -> Intent {
-    let warning = published_warning(published(snap, oldest));
+fn rewrite(cx: Cx, oldest: usize, title: &str, ask: Option<(String, String, &str)>, task: Task) -> Intent {
+    let warning = published_warning(published(cx, oldest));
     let action = action(title, task);
     match (ask, warning) {
         (None, None) => Intent::Run(action),
@@ -765,10 +966,58 @@ fn plural(n: usize, one: &str) -> String {
     if n == 1 { format!("1 {one}") } else { format!("{n} {one}s") }
 }
 
-fn commit_row(ui: &mut egui::Ui, snap: &Snapshot, index: usize, view: &View, intents: &mut Vec<Intent>) {
+const MAX_LANES: usize = 10;
+const LANE_WIDTH: f32 = 12.0;
+
+/// Draws a commit's row of the graph in the `lanes`-wide strip at the left of `rect`.
+fn paint_graph(ui: &egui::Ui, rect: egui::Rect, row: &oxbow_engine::graph::Row, lanes: usize, dot: egui::Color32) {
+    use oxbow_engine::graph::Part;
+    let painter = ui.painter();
+    // Rows have a gap between them; lines run through it so they join up.
+    let gap = ui.spacing().item_spacing.y / 2.0;
+    let (top, bottom, mid) = (rect.top() - gap, rect.bottom() + gap, rect.center().y);
+    let x = |lane: usize| rect.left() + LANE_WIDTH * (lane.min(lanes) as f32 + 0.5);
+    let hidden = |lane: usize| lane >= lanes;
+    for line in &row.lines {
+        if hidden(line.from) && hidden(line.to) {
+            continue;
+        }
+        let stroke = egui::Stroke::new(1.6, theme::graph_color(line.color));
+        let (a, b) = match line.part {
+            Part::Through => (egui::pos2(x(line.from), top), egui::pos2(x(line.to), bottom)),
+            Part::Top => (egui::pos2(x(line.from), top), egui::pos2(x(line.to), mid)),
+            Part::Bottom => (egui::pos2(x(line.from), mid), egui::pos2(x(line.to), bottom)),
+        };
+        if a.x == b.x {
+            painter.line_segment([a, b], stroke);
+        } else {
+            // A lane changing sideways bends rather than cutting straight across.
+            let bend = egui::epaint::CubicBezierShape::from_points_stroke(
+                [a, egui::pos2(a.x, (a.y + b.y) / 2.0), egui::pos2(b.x, (a.y + b.y) / 2.0), b],
+                false,
+                egui::Color32::TRANSPARENT,
+                stroke,
+            );
+            painter.add(bend);
+        }
+    }
+    if !hidden(row.lane) {
+        let center = egui::pos2(x(row.lane), mid);
+        painter.circle(center, 4.0, dot, egui::Stroke::new(1.5, theme::graph_color(row.color)));
+    }
+}
+
+fn commit_row(ui: &mut egui::Ui, snap: &Snapshot, index: usize, lanes: usize, view: &View, intents: &mut Vec<Intent>) {
     let c = &snap.commits[index];
     let selected = view.selected_commits.contains(&c.sha);
-    let response = ui.selectable_label(selected, theme::commit_row(ui, c, Some(snap.mark(&c.sha))));
+    let mark = snap.mark(&c.sha);
+    let graph = snap.graph.get(index).filter(|_| lanes > 0);
+    let space = if graph.is_some() { lanes as f32 * LANE_WIDTH + 4.0 } else { 0.0 };
+    let response = ui.selectable_label(selected, theme::commit_row_after(ui, c, Some(mark), space));
+    if let Some(row) = graph {
+        let strip = egui::Rect::from_min_size(egui::pos2(response.rect.left() + ui.spacing().button_padding.x, response.rect.top()), egui::vec2(space, response.rect.height()));
+        paint_graph(ui, strip, row, lanes, theme::mark_color(mark));
+    }
     if response.clicked() {
         let modifiers = ui.input(|i| i.modifiers);
         intents.push(if modifiers.command {
@@ -804,12 +1053,60 @@ fn commit_row(ui: &mut egui::Ui, snap: &Snapshot, index: usize, view: &View, int
             let label = if single { "Cherry-pick onto HEAD".to_owned() } else { format!("Cherry-pick {} onto HEAD", plural(picks.len(), "commit")) };
             item(ui, &label, intents, || run("Cherry-picking…", move |g| ops::cherry_pick(g, &picks)));
         }
+        let copied = shas.iter().all(|s| view.cherry_picks.iter().any(|(c, _)| c == s));
+        let copy_label = match (copied, single) {
+            (true, true) => "Remove from the cherry-pick list".to_owned(),
+            (true, false) => format!("Remove {} from the cherry-pick list", plural(shas.len(), "commit")),
+            (false, true) => "Copy for cherry-pick".to_owned(),
+            (false, false) => format!("Copy {} for cherry-pick", plural(shas.len(), "commit")),
+        };
+        // Oldest first: the order they are applied in.
+        let picked: Vec<(String, String)> = targets.iter().rev().map(|&i| (snap.commits[i].sha.clone(), snap.commits[i].subject.clone())).collect();
+        item(ui, &copy_label, intents, || Intent::CherryPicks(if copied { CherryPicks::Remove(picked) } else { CherryPicks::Add(picked) }));
         if single {
             let (sha, merge) = (c.sha.clone(), c.is_merge());
             item(ui, "Revert", intents, || run("Reverting…", move |g| ops::revert(g, &sha, merge)));
         }
+        if single && snap.operation.is_none() {
+            let b = snap.bisect.as_ref();
+            let (bad, good) = b.map(|b| (b.terms.0.clone(), b.terms.1.clone())).unwrap_or_else(|| ("bad".into(), "good".into()));
+            ui.menu_button("Bisect", |ui| {
+                if b.is_none() {
+                    ui.weak("Find the commit that introduced a problem:\nmark one that has it and one that does not.");
+                }
+                for (label, mark) in [(format!("Mark as {bad}"), ops::BisectMark::Bad), (format!("Mark as {good}"), ops::BisectMark::Good)] {
+                    let sha = c.sha.clone();
+                    item(ui, &label, intents, || run("Bisecting…", move |g| ops::bisect_mark(g, &sha, mark)));
+                }
+                if b.is_some() {
+                    let sha = c.sha.clone();
+                    item(ui, "Skip", intents, || run("Bisecting…", move |g| ops::bisect_mark(g, &sha, ops::BisectMark::Skip)));
+                    item(ui, "End bisect", intents, || run("Ending the bisect…", ops::bisect_reset));
+                }
+            });
+        }
+        if let (Some(p), true) = (&view.picking.patch, single)
+            && p.sha != c.sha
+            && let Some(source) = snap.commits.iter().position(|x| x.sha == p.sha)
+            && snap.operation.is_none()
+        {
+            match p.removal() {
+                Ok(removal) => {
+                    let (from, to) = (p.sha.clone(), c.sha.clone());
+                    let task: Task = Box::new(move |g| Rewrite::new(g).move_patch(&from, &removal, &to));
+                    let label = format!("Move the patch from {} into this commit", short(&p.sha));
+                    if ui.button(label).clicked() {
+                        ui.close();
+                        intents.push(rewrite(Cx { snap, confirm: view.confirm_rewriting_pushed }, source.max(index), "Moving the lines…", None, task));
+                    }
+                }
+                Err(e) => {
+                    ui.add_enabled(false, egui::Button::new(format!("Move the patch here: {e}")));
+                }
+            }
+        }
         ui.separator();
-        history_menu(ui, snap, index, &targets, intents);
+        history_menu(ui, Cx { snap, confirm: view.confirm_rewriting_pushed }, index, &targets, intents);
         if single {
             ui.separator();
             ui.menu_button("Reset to here", |ui| {
@@ -826,20 +1123,21 @@ fn commit_row(ui: &mut egui::Ui, snap: &Snapshot, index: usize, view: &View, int
 
 /// A menu entry for a history rewrite: pushes [`rewrite`]'s intent when clicked.
 #[allow(clippy::too_many_arguments)]
-fn rewrite_item(ui: &mut egui::Ui, label: &str, enabled: bool, hover: &str, snap: &Snapshot, oldest: usize, title: &str, intents: &mut Vec<Intent>, task: Task) {
+fn rewrite_item(ui: &mut egui::Ui, label: &str, enabled: bool, hover: &str, cx: Cx, oldest: usize, title: &str, intents: &mut Vec<Intent>, task: Task) {
     let mut response = ui.add_enabled(enabled, egui::Button::new(label));
     if !hover.is_empty() {
         response = response.on_hover_text(hover);
     }
     if response.clicked() {
         ui.close();
-        intents.push(rewrite(snap, oldest, title, None, task));
+        intents.push(rewrite(cx, oldest, title, None, task));
     }
 }
 
 /// Squash, fixup, drop, reword, edit, move and amend: rewriting the current branch. `targets` are indexes in the
 /// commit list, newest first; `index` is the clicked row.
-fn history_menu(ui: &mut egui::Ui, snap: &Snapshot, index: usize, targets: &[usize], intents: &mut Vec<Intent>) {
+fn history_menu(ui: &mut egui::Ui, cx: Cx, index: usize, targets: &[usize], intents: &mut Vec<Intent>) {
+    let snap = cx.snap;
     if let Some(op) = snap.operation {
         ui.add_enabled(false, egui::Button::new(format!("Finish the {} to rewrite history", op.name())));
         return;
@@ -855,11 +1153,11 @@ fn history_menu(ui: &mut egui::Ui, snap: &Snapshot, index: usize, targets: &[usi
     let staged = snap.status.iter().any(|e| e.is_staged());
 
     if single {
-        let warning = published_warning(published(snap, index));
+        let warning = published_warning(published(cx, index));
         item(ui, "Reword…", intents, || Intent::Reword { sha: c.sha.clone(), warning, paused: false });
         let sha = c.sha.clone();
         let hover = "Rebases up to this commit and stops there, so you can change it, then continue";
-        rewrite_item(ui, "Edit (stop here)", true, hover, snap, index, "Stopping at the commit…", intents, Box::new(move |g| Rewrite::new(g).edit(&sha)));
+        rewrite_item(ui, "Edit (stop here)", true, hover, cx, index, "Stopping at the commit…", intents, Box::new(move |g| Rewrite::new(g).edit(&sha)));
     }
     let can_meld = !targets.iter().any(|&i| is_root(i));
     let (squash, fixup) = if single {
@@ -868,9 +1166,9 @@ fn history_menu(ui: &mut egui::Ui, snap: &Snapshot, index: usize, targets: &[usi
         (format!("Squash {} into their previous", plural(n, "commit")), format!("Fixup {} into their previous", plural(n, "commit")))
     };
     let s = shas.clone();
-    rewrite_item(ui, &squash, can_meld, "Melds into the commit before, combining both messages", snap, below(oldest), "Squashing…", intents, Box::new(move |g| Rewrite::new(g).squash(&s, false)));
+    rewrite_item(ui, &squash, can_meld, "Melds into the commit before, combining both messages", cx, below(oldest), "Squashing…", intents, Box::new(move |g| Rewrite::new(g).squash(&s, false)));
     let s = shas.clone();
-    rewrite_item(ui, &fixup, can_meld, "Melds into the commit before, keeping its message", snap, below(oldest), "Fixing up…", intents, Box::new(move |g| Rewrite::new(g).squash(&s, true)));
+    rewrite_item(ui, &fixup, can_meld, "Melds into the commit before, keeping its message", cx, below(oldest), "Fixing up…", intents, Box::new(move |g| Rewrite::new(g).squash(&s, true)));
     let drop_label = if single { "Drop…".to_owned() } else { format!("Drop {}…", plural(n, "commit")) };
     let s = shas.clone();
     item(ui, &drop_label, intents, || {
@@ -879,7 +1177,7 @@ fn history_menu(ui: &mut egui::Ui, snap: &Snapshot, index: usize, targets: &[usi
         } else {
             (format!("Drop {}?", plural(n, "commit")), format!("{} and their changes are removed from the history.", plural(n, "commit")))
         };
-        rewrite(snap, oldest, "Dropping…", Some((title, format!("{what} Undo brings them back."), "Drop")), Box::new(move |g| Rewrite::new(g).drop_commits(&s)))
+        rewrite(cx, oldest, "Dropping…", Some((title, format!("{what} Undo brings them back."), "Drop")), Box::new(move |g| Rewrite::new(g).drop_commits(&s)))
     });
     if !single {
         return;
@@ -887,13 +1185,13 @@ fn history_menu(ui: &mut egui::Ui, snap: &Snapshot, index: usize, targets: &[usi
     ui.separator();
     let sha = c.sha.clone();
     let newest = snap.head.as_deref() == Some(c.sha.as_str());
-    rewrite_item(ui, "Move up", !newest, "Swap with the newer commit above", snap, index, "Moving the commit…", intents, Box::new(move |g| Rewrite::new(g).move_commit(&sha, Direction::Up)));
+    rewrite_item(ui, "Move up", !newest, "Swap with the newer commit above", cx, index, "Moving the commit…", intents, Box::new(move |g| Rewrite::new(g).move_commit(&sha, Direction::Up)));
     let sha = c.sha.clone();
-    rewrite_item(ui, "Move down", !is_root(index), "Swap with the older commit below", snap, below(index), "Moving the commit…", intents, Box::new(move |g| Rewrite::new(g).move_commit(&sha, Direction::Down)));
+    rewrite_item(ui, "Move down", !is_root(index), "Swap with the older commit below", cx, below(index), "Moving the commit…", intents, Box::new(move |g| Rewrite::new(g).move_commit(&sha, Direction::Down)));
     ui.separator();
     let sha = c.sha.clone();
     let hover = if staged { "Folds the staged changes into this commit" } else { "Stage the changes to fold in first" };
-    rewrite_item(ui, "Amend staged changes into this", staged, hover, snap, index, "Amending the commit…", intents, Box::new(move |g| Rewrite::new(g).amend_staged(&sha)));
+    rewrite_item(ui, "Amend staged changes into this", staged, hover, cx, index, "Amending the commit…", intents, Box::new(move |g| Rewrite::new(g).amend_staged(&sha)));
     let sha = c.sha.clone();
     let fixup_commit = ui.add_enabled(staged, egui::Button::new("Create fixup commit")).on_hover_text("Commits the staged changes as \"fixup! <subject>\"");
     if fixup_commit.clicked() {
@@ -902,9 +1200,9 @@ fn history_menu(ui: &mut egui::Ui, snap: &Snapshot, index: usize, targets: &[usi
     }
     let sha = c.sha.clone();
     let hover = "Melds every \"fixup!\" and \"squash!\" commit above into its target (git rebase --autosquash)";
-    rewrite_item(ui, "Squash fixup commits above", true, hover, snap, index, "Squashing fixup commits…", intents, Box::new(move |g| Rewrite::new(g).autosquash(&sha)));
+    rewrite_item(ui, "Squash fixup commits above", true, hover, cx, index, "Squashing fixup commits…", intents, Box::new(move |g| Rewrite::new(g).autosquash(&sha)));
     let sha = c.sha.clone();
-    rewrite_item(ui, "Reset author", true, "Makes you the author", snap, index, "Resetting the author…", intents, Box::new(move |g| Rewrite::new(g).reset_author(&sha)));
+    rewrite_item(ui, "Reset author", true, "Makes you the author", cx, index, "Resetting the author…", intents, Box::new(move |g| Rewrite::new(g).reset_author(&sha)));
 }
 
 // --- Stash -----------------------------------------------------------------------------
@@ -916,11 +1214,7 @@ pub fn stash(ui: &mut egui::Ui, snap: &Snapshot, view: &View, height: f32, inten
             ui.weak("No stashes");
             return;
         }
-        rows(ui, "stashes", |ui| {
-            for s in &snap.stashes {
-                stash_row(ui, s, view, intents);
-            }
-        });
+        virtual_rows(ui, "stashes", snap.stashes.len(), |ui, i| stash_row(ui, &snap.stashes[i], view, intents));
     });
 }
 

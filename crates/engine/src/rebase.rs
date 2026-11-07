@@ -35,7 +35,7 @@ fn with_newline(message: &str) -> String {
 
 impl<'a> Rewrite<'a> {
     pub fn new(git: &'a Git) -> Self {
-        Self { git, update_refs: UpdateRefs::default() }
+        Self { git, update_refs: git.update_refs() }
     }
 
     pub fn update_refs(mut self, mode: UpdateRefs) -> Self {
@@ -345,5 +345,143 @@ pub fn todo_steps(git: &Git) -> Result<Vec<TodoEntry>> {
     match std::fs::read_to_string(git.git_path("rebase-merge/git-rebase-todo")?) {
         Ok(text) => Ok(todo::parse_todo(&text)),
         Err(_) => Ok(Vec::new()),
+    }
+}
+
+/// Where changes taken out of a commit go.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PatchTarget {
+    /// Nowhere: they are gone (Undo brings them back).
+    Discard,
+    /// Into the working tree and index, as uncommitted changes.
+    WorkingTree,
+    /// Into a new commit right after the one they came from, with this message.
+    NewCommit(String),
+}
+
+impl Rewrite<'_> {
+    fn scratch(&self, name: &str, content: &str) -> Result<std::path::PathBuf> {
+        let file = self.git.git_path(name)?;
+        std::fs::write(&file, content).map_err(|e| GitError::user(format!("Could not write {}: {e}", file.display())))?;
+        Ok(file)
+    }
+
+    /// The changes `removal` (from `patch::removal_patch`, for any number of files) takes out of `sha`, as a
+    /// forward patch with blob ids, so it can be applied elsewhere with a 3-way merge.
+    fn forward_patch(&self, sha: &str, removal: &str) -> Result<String> {
+        let index = self.git.git_path("oxbow-patch-index")?;
+        let removal_file = self.scratch("oxbow-patch.patch", removal)?;
+        let index_text = index.to_string_lossy().into_owned();
+        // A scratch index, so the real one and the working tree are untouched.
+        let env = [("GIT_INDEX_FILE", index_text.as_str())];
+        let run = |args: &[&str]| self.git.exec(args, Exec { env: &env, ..Default::default() }).map(|o| o.stdout);
+        let result = (|| {
+            run(&["read-tree", sha])?;
+            run(&["apply", "--cached", "--recount", &removal_file.to_string_lossy()])?;
+            let without = run(&["write-tree"])?;
+            self.git.run(["diff", "--binary", without.trim(), sha])
+        })();
+        let _ = std::fs::remove_file(&index);
+        let _ = std::fs::remove_file(&removal_file);
+        result
+    }
+
+    /// Takes the changes in `removal` out of commit `sha`, and sends them to `target`.
+    pub fn remove_patch(&self, sha: &str, removal: &str, target: &PatchTarget) -> Result<()> {
+        let sha = self.full_sha(sha)?;
+        let patch_file = self.scratch("oxbow-patch.patch", removal)?;
+        let restore_file = self.git.git_path("oxbow-uncommit.patch")?;
+        let patch_path = patch_file.to_string_lossy().into_owned();
+        let result = self.at_commit(&sha, || {
+            self.git.run(["apply", "--index", "--recount", &patch_path])?;
+            self.git.run(["commit", "--amend", "--no-edit", "--allow-empty", "--no-verify"])?;
+            if *target == PatchTarget::Discard {
+                return Ok(());
+            }
+            // Exactly what was taken out, with blob ids, for a 3-way merge later.
+            let taken = self.git.run(["diff", "--binary", "HEAD", &sha])?;
+            std::fs::write(&restore_file, taken).map_err(|e| GitError::user(e.to_string()))?;
+            if let PatchTarget::NewCommit(message) = target {
+                self.git.run(["apply", "--index", &restore_file.to_string_lossy()])?;
+                self.git.exec(["commit", "--no-verify", "-F", "-"], Exec { input: Some(message), ..Default::default() })?;
+            }
+            Ok(())
+        });
+        let _ = std::fs::remove_file(&patch_file);
+        result?;
+        if *target == PatchTarget::WorkingTree {
+            let applied = self.git.run(["apply", "--3way", &restore_file.to_string_lossy()]);
+            if let Err(e) = applied {
+                return Err(GitError::user(format!(
+                    "The changes were taken out of the commit but could not be applied to your working tree ({}). They are saved in {}.",
+                    e.to_string().lines().next().unwrap_or_default(),
+                    restore_file.display()
+                )));
+            }
+        }
+        let _ = std::fs::remove_file(&restore_file);
+        Ok(())
+    }
+
+    /// Moves the changes `removal` takes out of `sha` into commit `target`, older or newer. If they don't apply there,
+    /// the history is put back as it was.
+    pub fn move_patch(&self, sha: &str, removal: &str, target: &str) -> Result<()> {
+        let (sha, target) = (self.full_sha(sha)?, self.full_sha(target)?);
+        if sha == target {
+            return Err(GitError::user("Pick a different commit to move the changes into."));
+        }
+        // Found again by its distance from HEAD after the first rewrite, which changes it if it is newer than `sha`.
+        let distance: usize = self.git.run(["rev-list", "--first-parent", "--count", &format!("{target}..HEAD")])?.trim().parse().unwrap_or(0);
+        if self.ancestor("HEAD", distance)?.as_deref() != Some(target.as_str()) && !(distance == 0 && self.head()? == target) {
+            return Err(GitError::user("The commit to move the changes into must be on the current branch, not on a merged-in branch."));
+        }
+        if self.merges_among(std::slice::from_ref(&target))? {
+            return Err(GitError::user("Changes can't be moved into a merge commit."));
+        }
+        let forward = self.forward_patch(&sha, removal)?;
+        let original = self.head()?;
+        self.remove_patch(&sha, removal, &PatchTarget::Discard)?;
+        let forward_file = self.scratch("oxbow-move.patch", &forward)?;
+        let new_target = if distance == 0 { self.head()? } else { self.ancestor("HEAD", distance)?.unwrap_or_default() };
+        let moved = self.at_commit(&new_target, || {
+            self.git.run(["apply", "--index", "--3way", &forward_file.to_string_lossy()])?;
+            self.git.run(["commit", "--amend", "--no-edit", "--allow-empty", "--no-verify"])?;
+            Ok(())
+        });
+        let _ = std::fs::remove_file(&forward_file);
+        if let Err(e) = moved {
+            // Back to before the first step; --keep leaves uncommitted changes alone.
+            let back = self.git.run(["reset", "--keep", &original]);
+            let reason = e.to_string().lines().next().unwrap_or_default().to_owned();
+            return Err(GitError::user(match back {
+                Ok(_) => format!("The changes don't apply to {}, so nothing was changed ({reason}).", &target[..7]),
+                Err(_) => format!("The changes don't apply to {} ({reason}). They were taken out of {}; the original history is {}.", &target[..7], &sha[..7], &original[..10]),
+            }));
+        }
+        Ok(())
+    }
+
+    /// Applies the changes `removal` takes out of `sha` to the working tree, or with `reverse` takes them out of it.
+    pub fn apply_patch(&self, sha: &str, removal: &str, reverse: bool) -> Result<()> {
+        let forward = self.forward_patch(sha, removal)?;
+        let file = self.scratch("oxbow-apply.patch", &forward)?;
+        let path = file.to_string_lossy().into_owned();
+        let mut args = vec!["apply"];
+        if reverse {
+            args.push("--reverse");
+        }
+        args.push(&path);
+        // Unstaged when it applies as it is; otherwise a 3-way merge, which stages what it merges and marks conflicts.
+        let plain = self.git.exec(&args, Exec { allowed: &[1], ..Default::default() });
+        let result = match plain {
+            Ok(out) if out.code == 0 => Ok(()),
+            Ok(_) => {
+                args.insert(1, "--3way");
+                self.git.run(&args).map(drop)
+            }
+            Err(e) => Err(e),
+        };
+        let _ = std::fs::remove_file(&file);
+        result
     }
 }

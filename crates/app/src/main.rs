@@ -5,6 +5,8 @@ mod app;
 mod detail;
 mod dialogs;
 mod panels;
+mod settings;
+mod start;
 mod theme;
 mod worker;
 
@@ -20,8 +22,8 @@ fn main() -> eframe::Result {
     if let Some(code) = oxbow_engine::editor::run_if_requested() {
         std::process::exit(code);
     }
-    // `oxbow <path>` opens that repository; otherwise the one Oxbow was started in, if any.
-    let start = std::env::args_os().nth(1).map(PathBuf::from).or_else(|| std::env::current_dir().ok());
+    // `oxbow <path>` opens that repository (or offers to create one there); without it, the project list.
+    let start = std::env::args_os().nth(1).map(PathBuf::from);
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default().with_title("Oxbow").with_inner_size([1280.0, 820.0]).with_min_inner_size([800.0, 500.0]),
         ..Default::default()

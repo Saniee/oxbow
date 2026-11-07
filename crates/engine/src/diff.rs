@@ -33,6 +33,8 @@ pub struct DiffFile {
     pub binary: bool,
     /// Mode changes and other header lines worth showing.
     pub notes: Vec<String>,
+    /// The mode of a file the diff adds ("100644"), from "new file mode".
+    pub new_mode: Option<String>,
     pub added: usize,
     pub removed: usize,
     pub hunks: Vec<Hunk>,
@@ -124,7 +126,7 @@ pub fn parse_diff(text: &str) -> Vec<DiffFile> {
         let line = line.strip_suffix('\r').unwrap_or(line);
         if line.starts_with("diff --git ") {
             let (path, old_path) = header_paths(line);
-            files.push(DiffFile { path, old_path, status: 'M', binary: false, notes: Vec::new(), added: 0, removed: 0, hunks: Vec::new() });
+            files.push(DiffFile { path, old_path, status: 'M', binary: false, notes: Vec::new(), new_mode: None, added: 0, removed: 0, hunks: Vec::new() });
             in_hunk = false;
             continue;
         }
@@ -137,8 +139,9 @@ pub fn parse_diff(text: &str) -> Vec<DiffFile> {
             continue;
         }
         if !in_hunk {
-            if line.starts_with("new file mode") {
+            if let Some(mode) = line.strip_prefix("new file mode ") {
                 file.status = 'A';
+                file.new_mode = Some(mode.trim().to_owned());
             } else if line.starts_with("deleted file mode") {
                 file.status = 'D';
             } else if let Some(p) = line.strip_prefix("rename from ") {

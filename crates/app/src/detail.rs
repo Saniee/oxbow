@@ -5,6 +5,8 @@ use oxbow_engine::diff::{self, DiffFile, LineKind};
 use oxbow_engine::queries::{self, Commit, LogQuery, Stash};
 use oxbow_engine::status::{self, StatusEntry};
 use oxbow_engine::Git;
+use oxbow_engine::patch::{self, Picks};
+use std::collections::BTreeMap;
 
 use crate::app::Intent;
 use crate::theme;
@@ -75,7 +77,90 @@ pub fn load(git: &Git, request: Request) -> Result<Detail, String> {
     })
 }
 
-pub fn show(ui: &mut egui::Ui, detail: &Detail, intents: &mut Vec<Intent>) {
+/// lazygit's custom patch: lines picked from one commit's diff, across its files, kept until acted on.
+#[derive(Clone, Debug)]
+pub struct CustomPatch {
+    pub sha: String,
+    pub subject: String,
+    /// By path: the file's diff in the commit and the lines picked in it.
+    pub files: BTreeMap<String, (DiffFile, Picks)>,
+}
+
+impl CustomPatch {
+    /// Changed lines picked, once change blocks are filled in.
+    pub fn lines(&self) -> usize {
+        self.files.values().map(|(f, p)| patch::picked_lines(f, p)).sum()
+    }
+
+    /// The patch that takes the picked lines out of the commit, all files together.
+    pub fn removal(&self) -> Result<String, String> {
+        let mut out = String::new();
+        for (file, picks) in self.files.values() {
+            if let Some(p) = patch::removal_patch(file, picks)? {
+                out.push_str(&p);
+            }
+        }
+        if out.is_empty() { Err("The patch has no changes in it.".into()) } else { Ok(out) }
+    }
+}
+
+/// Picking lines for a custom patch, in the commit shown.
+#[derive(Default)]
+pub struct Picking {
+    /// Clicking a changed line picks it.
+    pub on: bool,
+    pub patch: Option<CustomPatch>,
+}
+
+impl Picking {
+    /// The picks for a file of `sha`, starting a new patch if the current one is from another commit.
+    fn file_mut(&mut self, sha: &str, subject: &str, file: &DiffFile) -> &mut Picks {
+        if self.patch.as_ref().is_none_or(|p| p.sha != sha) {
+            self.patch = Some(CustomPatch { sha: sha.to_owned(), subject: subject.to_owned(), files: BTreeMap::new() });
+        }
+        let patch = self.patch.as_mut().unwrap();
+        &mut patch.files.entry(file.path.clone()).or_insert_with(|| (file.clone(), Picks::new())).1
+    }
+
+    /// Drops files left without picks, and the patch when nothing is left.
+    fn tidy(&mut self) {
+        if let Some(p) = &mut self.patch {
+            p.files.retain(|_, (_, picks)| !picks.is_empty());
+            if p.files.is_empty() {
+                self.patch = None;
+            }
+        }
+    }
+
+    fn picks(&self, sha: &str, path: &str) -> Option<&Picks> {
+        self.patch.as_ref().filter(|p| p.sha == sha).and_then(|p| p.files.get(path)).map(|(_, picks)| picks)
+    }
+}
+
+/// What a diff view needs to let lines be picked.
+struct Picker<'a> {
+    sha: &'a str,
+    subject: &'a str,
+    picking: &'a mut Picking,
+}
+
+pub fn show(ui: &mut egui::Ui, detail: &Detail, intents: &mut Vec<Intent>, picking: &mut Picking) {
+    if let Detail::Log { title, commits } = detail {
+        ui.heading(title);
+        ui.add_space(4.0);
+        let height = ui.spacing().interact_size.y;
+        egui::ScrollArea::vertical().id_salt("detail-log").auto_shrink([false, false]).show_rows(ui, height, commits.len(), |ui, range| {
+            ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
+                for c in &commits[range] {
+                    let row = ui.selectable_label(false, theme::commit_row(ui, c, None));
+                    if row.clicked() {
+                        intents.push(Intent::Select(Selection::Commit(c.sha.clone()), Request::Commit(c.clone())));
+                    }
+                }
+            });
+        });
+        return;
+    }
     egui::ScrollArea::both().id_salt("detail").auto_shrink([false, false]).show(ui, |ui| match detail {
         Detail::File { entry, staged, unstaged, omitted } => {
             ui.heading(&entry.path);
@@ -88,12 +173,12 @@ pub fn show(ui: &mut egui::Ui, detail: &Detail, intents: &mut Vec<Intent>) {
             if !staged.is_empty() {
                 ui.add_space(6.0);
                 ui.strong("Staged");
-                diff_view(ui, staged, "staged");
+                diff_view(ui, staged, "staged", None);
             }
             if !unstaged.is_empty() {
                 ui.add_space(6.0);
                 ui.strong(if entry.is_untracked() { "Untracked" } else { "Unstaged" });
-                diff_view(ui, unstaged, "unstaged");
+                diff_view(ui, unstaged, "unstaged", None);
             }
             omitted_note(ui, *omitted);
         }
@@ -127,31 +212,30 @@ pub fn show(ui: &mut egui::Ui, detail: &Detail, intents: &mut Vec<Intent>) {
                 ui.label(body);
             }
             ui.add_space(6.0);
+            if !files.is_empty() && !commit.is_merge() {
+                ui.horizontal(|ui| {
+                    ui.toggle_value(&mut picking.on, "✂ Pick lines")
+                        .on_hover_text("Click changed lines to collect them in a patch: then take them out of this commit, move them to another, or apply them to your working tree");
+                    if picking.on {
+                        ui.weak("click a changed line to pick it; its block's other side comes along");
+                    }
+                });
+            }
             ui.separator();
             if files.is_empty() {
                 ui.weak("No changes");
             }
-            diff_view(ui, files, &commit.sha);
+            let picker = (!commit.is_merge()).then_some(Picker { sha: &commit.sha, subject: &commit.subject, picking });
+            diff_view(ui, files, &commit.sha, picker);
             omitted_note(ui, *omitted);
         }
-        Detail::Log { title, commits } => {
-            ui.heading(title);
-            ui.add_space(4.0);
-            ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
-                for c in commits {
-                    let row = ui.selectable_label(false, theme::commit_row(ui, c, None));
-                    if row.clicked() {
-                        intents.push(Intent::Select(Selection::Commit(c.sha.clone()), Request::Commit(c.clone())));
-                    }
-                }
-            });
-        }
+        Detail::Log { .. } => {}
         Detail::Stash { stash, files, omitted } => {
             ui.heading(&stash.message);
             ui.weak(format!("{} · {}", stash.selector, stash.rel_date));
             ui.add_space(6.0);
             ui.separator();
-            diff_view(ui, files, &stash.sha);
+            diff_view(ui, files, &stash.sha, None);
             omitted_note(ui, *omitted);
         }
     });
@@ -170,8 +254,8 @@ fn is_generated(path: &str) -> bool {
     name.ends_with(".lock") || matches!(name, "package-lock.json" | "pnpm-lock.yaml" | "npm-shrinkwrap.json" | "go.sum")
 }
 
-/// Files with their hunks; each file can be collapsed.
-pub fn diff_view(ui: &mut egui::Ui, files: &[DiffFile], salt: &str) {
+/// Files with their hunks; each file can be collapsed. With a picker, lines can be picked for a custom patch.
+fn diff_view(ui: &mut egui::Ui, files: &[DiffFile], salt: &str, mut picker: Option<Picker>) {
     for (i, file) in files.iter().enumerate() {
         let mut title = format!("{}  {}", file.status, file.path);
         if let Some(old) = &file.old_path {
@@ -182,7 +266,13 @@ pub fn diff_view(ui: &mut egui::Ui, files: &[DiffFile], salt: &str) {
         if generated {
             header.push_str("   (generated)");
         }
-        egui::CollapsingHeader::new(RichText::new(header).strong()).id_salt((salt, i, &file.path)).default_open(!generated).show(ui, |ui| {
+        // Lines of this file in the patch, with their blocks filled in.
+        let picked = picker.as_ref().and_then(|p| p.picking.picks(p.sha, &file.path)).map(|picks| (picks.clone(), patch::effective(file, picks)));
+        if let Some((_, effective)) = &picked {
+            header.push_str(&format!("   ✂ {} picked", effective.len()));
+        }
+        let splittable = !file.binary && file.status != 'D';
+        let response = egui::CollapsingHeader::new(RichText::new(header).strong()).id_salt((salt, i, &file.path)).default_open(!generated).show(ui, |ui| {
             for note in &file.notes {
                 ui.weak(note);
             }
@@ -190,16 +280,39 @@ pub fn diff_view(ui: &mut egui::Ui, files: &[DiffFile], salt: &str) {
                 ui.weak("Binary file");
                 return;
             }
-            for hunk in &file.hunks {
-                hunk_view(ui, hunk);
+            for (h, hunk) in file.hunks.iter().enumerate() {
+                let clicked = hunk_view(ui, hunk, h, picker.as_ref().filter(|p| p.picking.on && splittable).map(|_| picked.as_ref().map(|(_, e)| e)));
+                if let (Some(line), Some(p)) = (clicked, picker.as_mut()) {
+                    let picks = p.picking.file_mut(p.sha, p.subject, file);
+                    if !picks.remove(&(h, line)) {
+                        picks.insert((h, line));
+                    }
+                    p.picking.tidy();
+                }
             }
         });
+        if let (Some(p), true) = (picker.as_mut(), splittable) {
+            response.header_response.context_menu(|ui| {
+                let all = patch::all_changes(file);
+                let whole = picked.as_ref().is_some_and(|(_, e)| *e == all);
+                if !whole && ui.button("Add the whole file to the patch").clicked() {
+                    *p.picking.file_mut(p.sha, p.subject, file) = all;
+                    ui.close();
+                }
+                if picked.is_some() && ui.button("Take the file out of the patch").clicked() {
+                    p.picking.file_mut(p.sha, p.subject, file).clear();
+                    p.picking.tidy();
+                    ui.close();
+                }
+            });
+        }
     }
 }
 
 /// One hunk. It takes the room of all its lines, but only the lines in view are laid out and drawn, so a diff
-/// thousands of lines long scrolls as smoothly as a short one.
-fn hunk_view(ui: &mut egui::Ui, hunk: &oxbow_engine::diff::Hunk) {
+/// thousands of lines long scrolls as smoothly as a short one. With `picking` (the file's picked lines, if any),
+/// changed lines can be clicked; returns the index of the one clicked.
+fn hunk_view(ui: &mut egui::Ui, hunk: &oxbow_engine::diff::Hunk, h: usize, picking: Option<Option<&Picks>>) -> Option<usize> {
     let font = egui::TextStyle::Monospace.resolve(ui.style());
     let row = ui.text_style_height(&egui::TextStyle::Monospace);
     let char_width = ui.fonts_mut(|f| f.glyph_width(&font, '0'));
@@ -211,12 +324,35 @@ fn hunk_view(ui: &mut egui::Ui, hunk: &oxbow_engine::diff::Hunk) {
 
     let clip = ui.clip_rect();
     if !clip.intersects(rect) {
-        return;
+        return None;
     }
     let first = (((clip.top() - rect.top()) / row).floor().max(0.0) as usize).min(rows);
     let last = (((clip.bottom() - rect.top()) / row).ceil().max(0.0) as usize).min(rows);
     if first >= last {
-        return;
+        return None;
+    }
+
+    // Picking: each visible changed line is clickable, and picked ones are marked in the gutter.
+    let mut clicked = None;
+    if let Some(picked) = picking {
+        for i in first.max(1)..last {
+            let j = i - 1;
+            if !matches!(hunk.lines[j].kind, LineKind::Added | LineKind::Removed) {
+                continue;
+            }
+            let line_rect = egui::Rect::from_min_size(egui::pos2(rect.left(), rect.top() + i as f32 * row), egui::vec2(rect.width(), row));
+            let response = ui.interact(line_rect, ui.scope_id().with(("pick", h, j)), egui::Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand);
+            let is_picked = picked.is_some_and(|p| p.contains(&(h, j)));
+            if is_picked {
+                ui.painter().rect_filled(line_rect, 0.0, ui.visuals().selection.bg_fill.gamma_multiply(0.45));
+                ui.painter().rect_filled(egui::Rect::from_min_size(line_rect.min, egui::vec2(3.0, row)), 0.0, theme::HUNK);
+            } else if response.hovered() {
+                ui.painter().rect_filled(line_rect, 0.0, ui.visuals().widgets.hovered.weak_bg_fill.gamma_multiply(0.5));
+            }
+            if response.clicked() {
+                clicked = Some(j);
+            }
+        }
     }
 
     let dark = ui.visuals().dark_mode;
@@ -243,5 +379,7 @@ fn hunk_view(ui: &mut egui::Ui, hunk: &oxbow_engine::diff::Hunk) {
     let top = rect.top() + first as f32 * row;
     let visible = egui::Rect::from_min_max(egui::pos2(rect.left(), top), egui::pos2(rect.right(), rect.top() + last as f32 * row));
     let place = egui::UiBuilder::new().max_rect(visible).layout(egui::Layout::top_down(egui::Align::Min));
-    ui.scope_builder(place, |ui| ui.add(egui::Label::new(job).wrap_mode(egui::TextWrapMode::Extend)));
+    // While picking, the text must not take the clicks for selecting it.
+    ui.scope_builder(place, |ui| ui.add(egui::Label::new(job).wrap_mode(egui::TextWrapMode::Extend).selectable(picking.is_none())));
+    clicked
 }

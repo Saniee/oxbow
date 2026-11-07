@@ -5,6 +5,7 @@ use std::process::{Command, Stdio};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
+use crate::rebase::UpdateRefs;
 use crate::command_log::CommandLog;
 
 #[derive(Debug, Clone)]
@@ -65,6 +66,7 @@ pub struct Git {
     root: PathBuf,
     git_dir: Arc<OnceLock<PathBuf>>,
     log: Option<Arc<CommandLog>>,
+    update_refs: UpdateRefs,
 }
 
 impl fmt::Debug for Git {
@@ -75,7 +77,7 @@ impl fmt::Debug for Git {
 
 impl Git {
     pub fn new(root: impl Into<PathBuf>) -> Self {
-        Self { git_path: PathBuf::from("git"), root: root.into(), git_dir: Arc::default(), log: None }
+        Self { git_path: PathBuf::from("git"), root: root.into(), git_dir: Arc::default(), log: None, update_refs: UpdateRefs::default() }
     }
 
     /// The working tree root of the repository containing `path`.
@@ -89,6 +91,16 @@ impl Git {
     pub fn with_log(mut self, log: Arc<CommandLog>) -> Self {
         self.log = Some(log);
         self
+    }
+
+    /// Whether history rewrites through this handle also move stacked branches.
+    pub fn with_update_refs(mut self, mode: UpdateRefs) -> Self {
+        self.update_refs = mode;
+        self
+    }
+
+    pub fn update_refs(&self) -> UpdateRefs {
+        self.update_refs
     }
 
     pub fn root(&self) -> &Path {
@@ -117,8 +129,16 @@ impl Git {
     {
         let args: Vec<String> = args.into_iter().map(|a| a.as_ref().to_owned()).collect();
         let mut attempt = 1;
+        // OXBOW_TRACE=1 prints each git command and how long it took, for finding slow spots.
+        static TRACE: OnceLock<bool> = OnceLock::new();
+        let trace = *TRACE.get_or_init(|| std::env::var_os("OXBOW_TRACE").is_some());
+        let start = std::time::Instant::now();
         loop {
-            match self.exec_once(&args, options) {
+            let result = self.exec_once(&args, options);
+            if trace {
+                eprintln!("[git {:>6.1} ms] {:?} git {}", start.elapsed().as_secs_f64() * 1000.0, std::thread::current().name().unwrap_or("?"), args.join(" "));
+            }
+            match result {
                 Err(GitError::Failed { ref stderr, .. }) if attempt < 10 && stderr.contains("index.lock': File exists") => {
                     attempt += 1;
                     std::thread::sleep(Duration::from_millis(200));
@@ -134,6 +154,14 @@ impl Git {
             .current_dir(&self.root)
             // There is no terminal to prompt in: fail instead of waiting. Credential helpers still show their own UI.
             .env("GIT_TERMINAL_PROMPT", "0")
+            // English, whatever the system language: Oxbow reads some of git's messages (a lock that is taken, a
+            // file that is busy) and works out relative dates the way git words them in English.
+            .env("LC_ALL", "en_US.UTF-8")
+            .env("LANG", "en_US.UTF-8")
+            .env("LANGUAGE", "en")
+            // Reading commands (diff, say) don't write the index, so they can't take index.lock from a command
+            // running beside them. Status is the one exception (see status::status).
+            .env("GIT_OPTIONAL_LOCKS", "0")
             // Never wait on an editor; Oxbow passes messages itself.
             .env("GIT_EDITOR", ":")
             .env("GIT_SEQUENCE_EDITOR", ":")

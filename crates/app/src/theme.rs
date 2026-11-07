@@ -49,16 +49,39 @@ pub fn ref_chip(ui: &mut egui::Ui, r: &str) {
 
 /// One commit as a single line: mark, short SHA, refs, subject, author and date.
 pub fn commit_row(ui: &egui::Ui, c: &Commit, mark: Option<CommitMark>) -> LayoutJob {
+    commit_row_after(ui, c, mark, 0.0)
+}
+
+/// Lane colours of the commit graph.
+const GRAPH: [Color32; 8] = [
+    Color32::from_rgb(0x4f, 0x9d, 0xe8),
+    Color32::from_rgb(0xd7, 0x8c, 0x3f),
+    Color32::from_rgb(0x9b, 0x6f, 0xe0),
+    Color32::from_rgb(0x3f, 0xb8, 0x9e),
+    Color32::from_rgb(0xe0, 0x6c, 0x9f),
+    Color32::from_rgb(0xb8, 0xb0, 0x3f),
+    Color32::from_rgb(0x6f, 0x8f, 0xb8),
+    Color32::from_rgb(0xc0, 0x6a, 0x5a),
+];
+
+pub fn graph_color(i: usize) -> Color32 {
+    GRAPH[i % GRAPH.len()]
+}
+
+/// A commit row whose text starts `graph` points in, leaving room for the graph; with a graph, the dot drawn there
+/// shows the mark.
+pub fn commit_row_after(ui: &egui::Ui, c: &Commit, mark: Option<CommitMark>, graph: f32) -> LayoutJob {
     let body = egui::TextStyle::Body.resolve(ui.style());
     let mono = egui::TextStyle::Monospace.resolve(ui.style());
     let text = ui.visuals().text_color();
     let weak = ui.visuals().weak_text_color();
     let mut job = LayoutJob::default();
     let fmt = |font: &egui::FontId, color: Color32| TextFormat { font_id: font.clone(), color, ..Default::default() };
-    if let Some(mark) = mark {
-        job.append("⏺ ", 0.0, fmt(&body, mark_color(mark)));
+    match mark {
+        Some(mark) if graph == 0.0 => job.append("⏺ ", 0.0, fmt(&body, mark_color(mark))),
+        _ => {}
     }
-    job.append(&c.short_sha, 0.0, fmt(&mono, weak));
+    job.append(&c.short_sha, graph, fmt(&mono, weak));
     for r in &c.refs {
         job.append(&format!("[{r}]"), 6.0, fmt(&body, ref_color(r)));
     }

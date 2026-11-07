@@ -56,7 +56,7 @@ fn demo_repo() -> TempRepo {
 
 fn harness(path: &Path) -> Harness<'static, App> {
     let path = path.to_owned();
-    Harness::builder().with_size(eframe::egui::vec2(1280.0, 820.0)).build_eframe(move |cc| App::new(cc.egui_ctx.clone(), Some(&path)))
+    Harness::builder().with_size(eframe::egui::vec2(1280.0, 820.0)).build_eframe(move |cc| App::with_prefs(cc.egui_ctx.clone(), Some(&path), crate::settings::Prefs::default(), None))
 }
 
 /// Steps the UI until `ready` holds; git runs on other threads, so this waits in real time.
@@ -238,12 +238,26 @@ fn rewords_an_older_commit() {
     let mut h = harness(&repo.dir);
     wait_for_text(&mut h, "Initial commit");
     menu(&mut h, "Initial commit", "Reword…");
+    // The message is read in the background, then the dialog opens.
+    wait(&mut h, "the reword dialog", |h| shows(h, "The new message"));
+    h.run_steps(2);
     h.key_press_modifiers(eframe::egui::Modifiers::COMMAND, eframe::egui::Key::A);
     h.event(eframe::egui::Event::Text("First commit".into()));
     h.run_steps(2);
     h.get_by_label("OK").click();
     wait(&mut h, "the reword", |_| subjects(&repo) == ["Add README", "First commit"]);
     wait_for_text(&mut h, "First commit");
+}
+
+#[test]
+fn amending_starts_from_the_last_commits_message() {
+    let repo = demo_repo();
+    let mut h = harness(&repo.dir);
+    wait_for_text(&mut h, "Add README");
+    h.get_by_label("Amend last commit").click();
+    wait(&mut h, "the last message in the box", |h| {
+        h.get_all_by_role(eframe::egui::accesskit::Role::MultilineTextInput).any(|n| n.accesskit_node().value().is_some_and(|v| v.contains("Explains the demo.")))
+    });
 }
 
 #[test]
@@ -299,4 +313,165 @@ fn long_diffs_lay_out_only_what_is_in_view_and_lock_files_start_collapsed() {
     h.get_by_label_contains("Cargo.lock").click();
     wait_for_text(&mut h, "(generated)");
     assert!(!shows(&h, "locked-crate"));
+}
+
+#[test]
+fn changes_made_outside_show_up_on_their_own() {
+    let repo = demo_repo();
+    let mut h = harness(&repo.dir);
+    wait_for_text(&mut h, "notes.txt");
+    std::fs::write(repo.dir.join("from-the-editor.txt"), "hi\n").unwrap();
+    wait_for_text(&mut h, "from-the-editor.txt");
+    // So is a commit made in a terminal.
+    repo.git.run(["add", "from-the-editor.txt"]).unwrap();
+    repo.git.run(["commit", "-qm", "Committed in a terminal"]).unwrap();
+    wait_for_text(&mut h, "Committed in a terminal");
+}
+
+fn harness_with(path: &Path, prefs: crate::settings::Prefs) -> Harness<'static, App> {
+    let path = path.to_owned();
+    Harness::builder().with_size(eframe::egui::vec2(1280.0, 820.0)).build_eframe(move |cc| App::with_prefs(cc.egui_ctx.clone(), Some(&path), prefs, None))
+}
+
+#[test]
+fn rewriting_pushed_commits_can_skip_the_question() {
+    let repo = demo_repo();
+    let prefs = crate::settings::Prefs { confirm_rewriting_pushed: false, ..Default::default() };
+    let mut h = harness_with(&repo.dir, prefs);
+    wait_for_text(&mut h, "Add README");
+    menu(&mut h, "Add README", "Fixup into previous");
+    wait(&mut h, "the fixup", |_| subjects(&repo) == ["Initial commit"]);
+}
+
+#[test]
+fn bisect_from_the_commit_menu_finds_the_culprit() {
+    let repo = demo_repo();
+    for n in 1..=4 {
+        std::fs::write(repo.dir.join("count.txt"), format!("{n}\n")).unwrap();
+        repo.git.run(["add", "count.txt"]).unwrap();
+        repo.git.run(["commit", "-qm", &format!("Count to {n}")]).unwrap();
+    }
+    // A clean tree, so bisect can check commits out.
+    repo.git.run(["stash", "push", "-qu", "-m", "before bisecting"]).unwrap();
+    let mut h = harness(&repo.dir);
+    wait_for_text(&mut h, "Count to 4");
+    h.get_by_label_contains("Count to 4").click_secondary();
+    h.run_steps(2);
+    h.get_by_label("Bisect").hover();
+    h.run_steps(3);
+    h.get_by_label("Mark as bad").click();
+    wait_for_text(&mut h, "now mark a commit that is good");
+    h.get_by_label_contains("Initial commit").click_secondary();
+    h.run_steps(2);
+    h.get_by_label("Bisect").hover();
+    h.run_steps(3);
+    h.get_by_label("Mark as good").click();
+    wait_for_text(&mut h, "left to check");
+    // Say "Count to 2" brought the problem in.
+    for _ in 0..4 {
+        let bad = std::fs::read_to_string(repo.dir.join("count.txt")).map(|t| t.trim().parse::<u32>().unwrap_or(0) >= 2).unwrap_or(false);
+        if shows(&h, "First bad commit") {
+            break;
+        }
+        let before = repo.git.run(["rev-parse", "HEAD"]).unwrap();
+        click_when_enabled(&mut h, if bad { "Bad" } else { "Good" });
+        // Until git has checked out the next commit (or found the culprit) and the panels show it.
+        wait(&mut h, "the next bisect step", |h| {
+            let head = repo.git.run(["rev-parse", "HEAD"]).unwrap();
+            let moved = head != before || shows(h, "First bad commit");
+            moved && !h.state().is_running() && h.state().shown_head().as_deref() == Some(head.trim())
+        });
+    }
+    wait_for_text(&mut h, "First bad commit");
+    let found = h.get_by_label_contains("First bad commit").accesskit_node().label().unwrap_or_default();
+    assert!(found.ends_with("Count to 2"), "{found}");
+    click_when_enabled(&mut h, "End bisect");
+    wait(&mut h, "the bisect to end", |_| oxbow_engine::queries::bisect_state(&repo.git).unwrap().is_none());
+}
+
+#[test]
+fn copied_commits_are_pasted_oldest_first() {
+    let repo = demo_repo();
+    repo.git.run(["branch", "side", "HEAD~1"]).unwrap();
+    let mut h = harness(&repo.dir);
+    wait_for_text(&mut h, "Add README");
+    menu(&mut h, "Add README", "Copy for cherry-pick");
+    wait_for_text(&mut h, "1 commit copied");
+    menu(&mut h, "   side", "Check out");
+    wait(&mut h, "the checkout", |_| repo.git.run(["branch", "--show-current"]).unwrap().trim() == "side");
+    // The list survives the refresh.
+    wait(&mut h, "the list to catch up", |h| !shows(h, "Add README") || shows(h, "1 commit copied"));
+    click_when_enabled(&mut h, "Paste onto HEAD");
+    wait(&mut h, "the cherry-pick", |_| subjects(&repo) == ["Add README", "Initial commit"]);
+    wait(&mut h, "the list to clear", |h| !shows(h, "commit copied"));
+}
+
+/// Whether git is still adding a worktree (its lock file is there).
+fn worktree_being_added(repo: &TempRepo) -> bool {
+    std::fs::read_dir(repo.dir.join(".git/worktrees")).map(|d| d.flatten().any(|e| e.path().join("locked").exists())).unwrap_or(false)
+}
+
+#[test]
+fn a_branch_can_be_checked_out_in_a_new_worktree() {
+    let repo = demo_repo();
+    repo.git.run(["branch", "topic"]).unwrap();
+    let dir = repo.dir.with_file_name(format!("{}-topic", repo.dir.file_name().unwrap().to_string_lossy()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let mut h = harness(&repo.dir);
+    wait_for_text(&mut h, "   topic");
+    menu(&mut h, "   topic", "Check out in a new worktree…");
+    // The folder is suggested beside the repository.
+    let fields: Vec<String> = h.get_all_by_role(Role::TextInput).filter_map(|n| n.value()).collect();
+    let suggested = fields.iter().find(|v| v.contains("-topic")).cloned().unwrap_or_default();
+    assert!(suggested.ends_with(&format!("{}-topic", repo.dir.file_name().unwrap().to_string_lossy())), "{suggested}");
+    h.get_by_label("OK").click();
+    // git registers the worktree before it has checked the files out.
+    wait(&mut h, "the worktree", |_| dir.join("main.rs").exists() && !worktree_being_added(&repo));
+    repo.git.run(["worktree", "remove", "--force", &dir.to_string_lossy()]).unwrap();
+}
+
+#[test]
+fn a_plain_folder_can_become_a_repository_and_the_project_list_reopens_it() {
+    let n = COUNTER.fetch_add(1, Ordering::SeqCst);
+    let dir = std::env::temp_dir().join(format!("oxbow-ui-plain-{}-{n}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let repo = TempRepo { git: Git::new(&dir), dir };
+    let mut h = harness(&repo.dir);
+    wait_for_text(&mut h, "Not a Git repository");
+    h.get_by_label("Create repository").click();
+    wait(&mut h, "the repository", |_| repo.dir.join(".git").is_dir());
+    wait_for_text(&mut h, "No commits yet");
+
+    click_when_enabled(&mut h, "Projects");
+    let name = repo.dir.file_name().unwrap().to_string_lossy().into_owned();
+    wait_for_text(&mut h, "Open folder…");
+    h.get_by_label_contains(&name).click();
+    wait_for_text(&mut h, "No commits yet");
+}
+
+#[test]
+fn a_file_picked_from_a_commit_moves_to_the_working_tree() {
+    let repo = demo_repo();
+    let mut h = harness(&repo.dir);
+    wait_for_text(&mut h, "Add README");
+    h.get_by_label_contains("Add README").click();
+    wait_for_text(&mut h, "Explains the demo.");
+    h.get_by_label("✂ Pick lines").click();
+    h.run_steps(2);
+    h.get_by_label_contains("A  README.md").click_secondary();
+    h.run_steps(2);
+    h.get_by_label("Add the whole file to the patch").click();
+    wait_for_text(&mut h, "Patch: 1 line in 1 file");
+    h.get_by_label("Use it ⏷").click();
+    h.run_steps(2);
+    h.get_by_label("Move it to the working tree").click();
+    h.run_steps(3);
+    // "Add README" is on main, so this asks first.
+    h.get_by_label("Rewrite").click();
+    wait(&mut h, "the lines to move", |_| {
+        repo.git.run(["show", "--name-only", "--format=", "HEAD"]).unwrap().trim().is_empty() && repo.dir.join("README.md").exists()
+    });
+    assert_eq!(subjects(&repo), ["Add README", "Initial commit"]);
+    wait(&mut h, "the patch to be used up", |h| !shows(h, "Patch: "));
 }
