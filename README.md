@@ -1,7 +1,8 @@
 # Oxbow
 
 A desktop Git workbench written in Rust with [egui](https://github.com/emilk/egui). It's the successor to the
-SlothGit VS Code extension, whose last code is on the `comprehensive-ui-overhaul` branch.
+SlothGit VS Code extension, which is still in this repository's history: its last version is commit `1877ada`
+(SlothGit 2.0.0), the one before Oxbow's first, and its releases are tagged `0.0.1` to `1.0.0`.
 
 ## Features
 
@@ -38,13 +39,29 @@ Everything SlothGit did, ported in three phases:
 - **Stash:** apply, pop, drop, branch from a stash.
 - **Details:** the selection's message and patch, a file's staged and unstaged changes, or a branch's log.
 - **Command log:** each action and the git commands it ran.
-- **Settings** (⚙ in the toolbar): how many commits and reflog entries to show, which branches count as main,
+- **Settings** (⚙ in the toolbar): the theme (the system's dark or light, Dark, Light, One Dark Pro, Gruvbox Dark
+  or Gruvbox Light), how many commits and reflog entries to show, which branches count as main,
   branch order, whether rewrites move stacked branches (`--update-refs`), whether to ask before rewriting pushed
   commits, and whether to refresh when files change. They're saved in `%APPDATA%\Oxbow\settings.txt` (Windows) or
   `~/.config/oxbow/settings.txt`, next to `recent.txt`.
 - Oxbow refreshes on its own when files in the repository change (ignored files don't count), and when its window
   gets focus. The sections on the left can be resized by dragging the handles between them; double-click one to
   reset them.
+
+## Install
+
+Oxbow runs the git that's installed, so install [Git](https://git-scm.com) first. Then, from a release:
+
+- **Windows:** `oxbow-<version>-windows-x64-setup.exe` installs for your user without admin rights (or for everyone,
+  if you choose that on its first page), and can add Oxbow to PATH so `oxbow <folder>` works in a terminal.
+  Installing a newer version updates it in place. `oxbow-<version>-windows-x64.zip` is the same program to run from
+  anywhere. Windows may warn that the installer is from an unknown publisher, as it isn't signed yet.
+- **Linux:** `oxbow-<version>-x86_64.AppImage` runs on most distributions (`chmod +x` it first).
+  `oxbow_<version>_amd64.deb` installs it on Debian, Ubuntu and their relatives, with git if it's missing
+  (`sudo apt install ./oxbow_<version>_amd64.deb`). `oxbow-<version>-linux-x64.tar.gz` is the bare program, with its
+  menu entry and icon.
+
+`SHA256SUMS` lists each file's checksum.
 
 ## Layout
 
@@ -94,6 +111,33 @@ OXBOW_PERF_REPO=path/to/repo cargo test -p oxbow-engine --test perf -- --ignored
 ```
 
 Pass a folder to open it directly: `cargo run -p oxbow -- path/to/repo`.
+
+### Packages and releases
+
+The packages are built into `dist/` by the same scripts locally and in the release workflow:
+
+- **Windows** (needs [Inno Setup](https://jrsoftware.org/isinfo.php) 6 or later): `pwsh packaging\windows\build.ps1` makes
+  the installer (`packaging/windows/oxbow.iss`) and the `.zip`.
+- **Linux** (needs Docker, on any system): build the image once, then run it on the source.
+
+  ```bash
+  docker build -t oxbow-linux packaging/linux
+  docker run --rm -v "$PWD:/src:ro" -v "$PWD/dist:/out" oxbow-linux
+  ```
+
+  It builds on Ubuntu 22.04, so the result runs on distributions with an older glibc too, and makes the AppImage,
+  the `.deb` (described in `crates/app/Cargo.toml` under `[package.metadata.deb]`) and the `.tar.gz`.
+
+The window and `.exe` icon is `crates/app/assets/icon.png` and `icon.ico`; `crates/app/build.rs` puts the icon and
+version details in the `.exe`.
+
+To release, set `version` in `crates/app/Cargo.toml`, build once so `Cargo.lock` follows, commit, and push a tag
+`oxbow-v<version>` (the prefix keeps them apart from the SlothGit extension's tags). `.github/workflows/release.yml`
+tests and builds on Windows and Linux, and makes a GitHub Release with every package and `SHA256SUMS`; a tag with a
+suffix (`oxbow-v0.2.0-beta.1`) makes a pre-release. Its notes are that
+version's section of `CHANGELOG.md` (`## 0.2.0`) when there is one, otherwise GitHub's generated notes. Running the
+workflow by hand only builds, keeping the packages as the run's artifacts. `.github/workflows/ci.yml` runs the tests
+and clippy on every push.
 
 ## License
 

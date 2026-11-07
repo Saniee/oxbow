@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Oxbow
+GenericName=Git client
+Comment=A desktop Git workbench
+Exec=oxbow %f
+Icon=oxbow
+Terminal=false
+Categories=Development;RevisionControl;
+Keywords=git;version control;commit;branch;rebase;
+StartupWMClass=oxbow

@@ -168,7 +168,7 @@ pub fn show(ui: &mut egui::Ui, detail: &Detail, intents: &mut Vec<Intent>, picki
                 ui.weak(format!("renamed from {old}"));
             }
             if entry.is_conflict() {
-                ui.colored_label(theme::CONFLICT, "Conflicted: resolve it in your editor, then stage it to mark it resolved.");
+                ui.colored_label(theme::palette(ui).conflict, "Conflicted: resolve it in your editor, then stage it to mark it resolved.");
             }
             if !staged.is_empty() {
                 ui.add_space(6.0);
@@ -345,7 +345,7 @@ fn hunk_view(ui: &mut egui::Ui, hunk: &oxbow_engine::diff::Hunk, h: usize, picki
             let is_picked = picked.is_some_and(|p| p.contains(&(h, j)));
             if is_picked {
                 ui.painter().rect_filled(line_rect, 0.0, ui.visuals().selection.bg_fill.gamma_multiply(0.45));
-                ui.painter().rect_filled(egui::Rect::from_min_size(line_rect.min, egui::vec2(3.0, row)), 0.0, theme::HUNK);
+                ui.painter().rect_filled(egui::Rect::from_min_size(line_rect.min, egui::vec2(3.0, row)), 0.0, theme::palette(ui).hunk);
             } else if response.hovered() {
                 ui.painter().rect_filled(line_rect, 0.0, ui.visuals().widgets.hovered.weak_bg_fill.gamma_multiply(0.5));
             }
@@ -355,20 +355,20 @@ fn hunk_view(ui: &mut egui::Ui, hunk: &oxbow_engine::diff::Hunk, h: usize, picki
         }
     }
 
-    let dark = ui.visuals().dark_mode;
+    let colors = theme::palette(ui);
     let text_color = ui.visuals().text_color();
     let weak = ui.visuals().weak_text_color();
     let fmt = |color: Color32, background: Color32| TextFormat { font_id: font.clone(), color, background, ..Default::default() };
     let mut job = LayoutJob::default();
     for i in first..last {
         let Some(line) = i.checked_sub(1).map(|j| &hunk.lines[j]) else {
-            job.append(&format!("{}\n", hunk.header), 0.0, fmt(theme::HUNK, Color32::TRANSPARENT));
+            job.append(&format!("{}\n", hunk.header), 0.0, fmt(colors.hunk, Color32::TRANSPARENT));
             continue;
         };
         let num = |n: Option<u32>| n.map(|n| format!("{n:>5}")).unwrap_or_else(|| "     ".into());
         let (sign, bg) = match line.kind {
-            LineKind::Added => ('+', theme::added_bg(dark)),
-            LineKind::Removed => ('-', theme::removed_bg(dark)),
+            LineKind::Added => ('+', colors.added_bg),
+            LineKind::Removed => ('-', colors.removed_bg),
             LineKind::Context => (' ', Color32::TRANSPARENT),
             LineKind::Note => ('\\', Color32::TRANSPARENT),
         };

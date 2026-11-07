@@ -3,6 +3,8 @@ name = "oxbow"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
+description = "A desktop Git workbench"
+repository = "https://github.com/Saniee/oxbow"
 
 [dependencies]
 eframe = "0.37.0"
@@ -10,6 +12,26 @@ egui = { version = "0.37", features = ["monochrome_emoji_fonts"] }
 oxbow-engine = { version = "0.1.0", path = "../engine" }
 rfd = "0.18.0"
 
+[build-dependencies]
+winresource = "0.1.34"
+
 [dev-dependencies]
 ctor = "1.0.13"
 egui_kittest = { version = "0.37", features = ["eframe"] }
+
+# The .deb (cargo deb, from packaging/linux/build.sh).
+[package.metadata.deb]
+name = "oxbow"
+maintainer = "Saniee"
+copyright = "Saniee"
+license-file = ["../../LICENSE", "0"]
+extended-description = "A desktop Git workbench: stage and commit, branches, history rewriting, interactive rebase, custom patches, bisect and worktrees. It runs your own git."
+depends = "git, $auto"
+section = "vcs"
+priority = "optional"
+assets = [
+    ["target/release/oxbow", "usr/bin/", "755"],
+    ["../../packaging/linux/oxbow.desktop", "usr/share/applications/", "644"],
+    ["assets/icon.png", "usr/share/icons/hicolor/256x256/apps/oxbow.png", "644"],
+    ["../../README.md", "usr/share/doc/oxbow/README.md", "644"],
+]

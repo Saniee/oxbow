@@ -100,7 +100,7 @@ pub fn show(ui: &mut egui::Ui, projects: &mut Projects, intents: &mut Vec<Intent
             ui.horizontal(|ui| {
                 ui.strong("Projects");
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button("New repository…").on_hover_text("git init in a folder you pick").clicked() {
+                    if ui.button("New repository…").on_hover_text("Initialize a repository").clicked() {
                         intents.push(Intent::NewRepo(None));
                     }
                     if ui.button("Open folder…").clicked() {
@@ -134,7 +134,7 @@ pub fn show(ui: &mut egui::Ui, projects: &mut Projects, intents: &mut Vec<Intent
                         let fmt = |size: f32, color| egui::TextFormat { font_id: egui::FontId::new(size, body.family.clone()), color, ..Default::default() };
                         job.append(&name, 0.0, fmt(body.size + 2.0, if missing { weak } else { text }));
                         job.append(&format!("\n{path}"), 0.0, fmt(body.size - 1.0, weak));
-                        let when = if missing { "folder not found".to_owned() } else { ago(recent.opened) };
+                        let when = if missing { "Folder not found".to_owned() } else { ago(recent.opened) };
                         let row = ui.horizontal(|ui| {
                             let r = ui.add_enabled(!missing, egui::Button::selectable(false, job).min_size(egui::vec2(width - 150.0, 44.0)));
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| ui.weak(when));

@@ -1,0 +1,119 @@
+# Builds Oxbow's installers and packages and attaches them to a GitHub Release when a version tag is pushed.
+#
+#   1. Set "version" in crates/app/Cargo.toml (e.g. 0.2.0), run cargo build so Cargo.lock follows, and commit.
+#   2. git tag oxbow-v0.2.0 && git push origin oxbow-v0.2.0
+#
+# The "oxbow-" keeps them apart from the SlothGit extension's tags (0.1.0 … 1.0.0) in the same repository.
+# Tags with a suffix (oxbow-v0.2.0-beta.1) become pre-releases. Running it by hand (Actions > Release > Run workflow)
+# builds everything and keeps the files as the run's artifacts, without making a release.
+#
+# Both builds run the same scripts as a local build: packaging/windows/build.ps1 and packaging/linux/build.sh.
+name: Release
+
+on:
+  push:
+    tags: ['oxbow-v[0-9]*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_VERSION: 1.98.1
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the tag matches crates/app/Cargo.toml
+        id: version
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' crates/app/Cargo.toml | head -n1)
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          if [[ "${GITHUB_REF_TYPE}" == tag && "${GITHUB_REF_NAME#oxbow-v}" != "${version}" ]]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} does not match crates/app/Cargo.toml version ${version} (expected oxbow-v${version})."
+            exit 1
+          fi
+
+  windows:
+    needs: check
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+      - name: Test
+        run: |
+          git config --global user.name "CI"
+          git config --global user.email "ci@localhost"
+          cargo test --workspace --locked
+      - name: Inno Setup
+        shell: pwsh
+        run: |
+          $found = Get-Command iscc -ErrorAction SilentlyContinue
+          if (-not $found) { $found = Get-ChildItem "${env:ProgramFiles(x86)}\Inno Setup *\ISCC.exe", "$env:ProgramFiles\Inno Setup *\ISCC.exe" -ErrorAction SilentlyContinue }
+          if (-not $found) { choco install innosetup -y --no-progress }
+      - name: Build
+        shell: pwsh
+        run: packaging\windows\build.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: dist/*
+          if-no-files-found: error
+
+  linux:
+    needs: check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the build image
+        run: docker build -t oxbow-linux packaging/linux
+      - name: Test
+        run: docker run --rm -v "$PWD:/src:ro" oxbow-linux cargo test --workspace --locked
+      - name: Build
+        run: |
+          mkdir -p dist
+          docker run --rm -v "$PWD:/src:ro" -v "$PWD/dist:/out" oxbow-linux
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    if: github.ref_type == 'tag'
+    needs: [check, windows, linux]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        working-directory: dist
+        run: sha256sum * > SHA256SUMS
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          prerelease=""
+          if [[ "${GITHUB_REF_NAME}" == *-* ]]; then prerelease="--prerelease"; fi
+          # Release notes: this version's section of CHANGELOG.md, or GitHub's generated notes when it has none.
+          : > notes.md
+          if [[ -f CHANGELOG.md ]]; then
+            awk -v v="${GITHUB_REF_NAME#oxbow-v}" '/^## / { found = ($2 == v || $2 == "v" v); next } found' CHANGELOG.md > notes.md
+          fi
+          if [[ -s notes.md ]]; then notes=(--notes-file notes.md); else notes=(--generate-notes); fi
+          gh release create "${GITHUB_REF_NAME}" dist/* \
+            --title "Oxbow ${GITHUB_REF_NAME#oxbow-}" \
+            "${notes[@]}" \
+            ${prerelease}

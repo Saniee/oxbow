@@ -8,6 +8,8 @@ use oxbow_engine::Settings;
 use oxbow_engine::queries::BranchSort;
 use oxbow_engine::rebase::UpdateRefs;
 
+use crate::theme;
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Prefs {
     pub engine: Settings,
@@ -17,11 +19,12 @@ pub struct Prefs {
     pub watch_files: bool,
     /// How the left column's height is shared by Files, Branches, Commits and Stash; adds up to 1.
     pub panel_sizes: [f32; 4],
+    pub theme: theme::Choice,
 }
 
 impl Default for Prefs {
     fn default() -> Self {
-        Self { engine: Settings::default(), confirm_rewriting_pushed: true, watch_files: true, panel_sizes: [0.34, 0.2, 0.34, 0.12] }
+        Self { engine: Settings::default(), confirm_rewriting_pushed: true, watch_files: true, panel_sizes: [0.34, 0.2, 0.34, 0.12], theme: theme::Choice::System }
     }
 }
 
@@ -74,6 +77,7 @@ impl Prefs {
                 "update_refs" => p.engine.update_refs = UPDATE_REFS.iter().find(|s| s.1 == value).map_or(p.engine.update_refs, |s| s.0),
                 "confirm_rewriting_pushed" => p.confirm_rewriting_pushed = flag(),
                 "watch_files" => p.watch_files = flag(),
+                "theme" => p.theme = theme::THEMES.iter().find(|t| t.1 == value).map_or(p.theme, |t| t.0),
                 "panel_sizes" => {
                     let sizes: Vec<f32> = value.split(',').filter_map(|v| v.trim().parse().ok()).collect();
                     let total: f32 = sizes.iter().sum();
@@ -93,13 +97,14 @@ impl Prefs {
         format!(
             "# Oxbow settings. Edit here or in the app's Settings window.\n\
              commit_limit = {}\nreflog_limit = {}\nmain_branches = {}\nbranch_sort = {sort}\nupdate_refs = {update}\n\
-             confirm_rewriting_pushed = {}\nwatch_files = {}\npanel_sizes = {}\n",
+             confirm_rewriting_pushed = {}\nwatch_files = {}\npanel_sizes = {}\ntheme = {}\n",
             e.commit_limit,
             e.reflog_limit,
             e.main_branches.join(", "),
             bool_text(self.confirm_rewriting_pushed),
             bool_text(self.watch_files),
             self.panel_sizes.map(|s| format!("{s:.3}")).join(", "),
+            key_of(&theme::THEMES, self.theme),
         )
     }
 
@@ -147,6 +152,10 @@ pub fn show(ctx: &egui::Context, editor: &mut Editor, path: Option<&Path>) -> Ou
     egui::Window::new("Settings").open(&mut open).collapsible(false).resizable(false).default_width(460.0).show(ctx, |ui| {
         let d = &mut editor.draft;
         egui::Grid::new("settings").num_columns(2).spacing([16.0, 10.0]).show(ui, |ui| {
+            ui.label("Theme");
+            changed |= combo(ui, "theme", &mut d.theme, &theme::THEMES);
+            ui.end_row();
+
             ui.label("Commits shown");
             changed |= ui.add(egui::DragValue::new(&mut d.engine.commit_limit).range(10..=100_000).speed(10)).changed();
             ui.end_row();
@@ -201,6 +210,7 @@ mod tests {
         p.engine.branch_sort = BranchSort::Name;
         p.engine.update_refs = UpdateRefs::Always;
         p.confirm_rewriting_pushed = false;
+        p.theme = theme::Choice::GruvboxDark;
         assert_eq!(Prefs::parse(&p.to_text()), p);
 
         let odd = Prefs::parse("commit_limit = lots\nnonsense\nupdate_refs = sometimes\nreflog_limit = 3\n");

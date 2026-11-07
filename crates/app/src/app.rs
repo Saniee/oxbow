@@ -92,6 +92,7 @@ impl App {
     }
 
     pub fn with_prefs(ctx: egui::Context, start: Option<&Path>, prefs: Prefs, prefs_path: Option<PathBuf>) -> Self {
+        crate::theme::apply(&ctx, prefs.theme);
         let mut app = App {
             ctx,
             repo: None,
@@ -380,6 +381,9 @@ impl App {
             self.error = Some(format!("Could not save the settings to {}: {e}", path.display()));
         }
         let reload = prefs.engine != self.prefs.engine;
+        if prefs.theme != self.prefs.theme {
+            crate::theme::apply(&self.ctx, prefs.theme);
+        }
         self.prefs = prefs;
         self.update_watcher();
         if reload && let Some(repo) = &self.repo {
@@ -533,8 +537,8 @@ impl App {
             for entry in entries {
                 let (icon, color) = match entry.status {
                     LogStatus::Running => ("…", ui.visuals().text_color()),
-                    LogStatus::Done => ("✔", crate::theme::MERGED),
-                    LogStatus::Failed => ("✖", crate::theme::CONFLICT),
+                    LogStatus::Done => ("✔", crate::theme::palette(ui).merged),
+                    LogStatus::Failed => ("✖", crate::theme::palette(ui).conflict),
                 };
                 ui.horizontal(|ui| {
                     ui.colored_label(color, icon);
@@ -552,7 +556,7 @@ impl App {
         if let Some(error) = self.error.clone() {
             egui::Frame::new().fill(ui.visuals().extreme_bg_color).inner_margin(8.0).corner_radius(4.0).show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    ui.colored_label(crate::theme::CONFLICT, "✖");
+                    ui.colored_label(crate::theme::palette(ui).conflict, "✖");
                     ui.add(egui::Label::new(RichText::new(&error).monospace()).wrap_mode(egui::TextWrapMode::Wrap));
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
                         if ui.small_button("Dismiss").clicked() {
@@ -572,7 +576,7 @@ impl App {
             return;
         };
         if let Some(e) = &repo.error {
-            ui.colored_label(crate::theme::CONFLICT, e);
+            ui.colored_label(crate::theme::palette(ui).conflict, e);
         }
         match &self.detail.current {
             _ if self.detail.loading && self.detail.current.is_none() => {
@@ -580,7 +584,7 @@ impl App {
             }
             Some(Ok(d)) => detail::show(ui, d, intents, &mut self.view.picking),
             Some(Err(e)) => {
-                ui.colored_label(crate::theme::CONFLICT, e);
+                ui.colored_label(crate::theme::palette(ui).conflict, e);
             }
             None => {
                 ui.centered_and_justified(|ui| ui.weak("Select a file, commit, branch or stash to see it here."));

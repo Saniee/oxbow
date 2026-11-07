@@ -121,7 +121,7 @@ pub fn status(ui: &mut egui::Ui, snap: &Snapshot, root: &str, running: Option<&s
         ui.separator();
         match (&snap.branch, &snap.head) {
             (Some(b), _) => {
-                ui.label(RichText::new(b).strong().color(theme::LOCAL_REF));
+                ui.label(RichText::new(b).strong().color(theme::palette(ui).local_ref));
             }
             (None, Some(sha)) => {
                 ui.label(RichText::new(format!("detached at {}", &sha[..7.min(sha.len())])).strong());
@@ -186,7 +186,7 @@ pub fn status(ui: &mut egui::Ui, snap: &Snapshot, root: &str, running: Option<&s
     }
     if let Some(op) = snap.operation {
         ui.horizontal_wrapped(|ui| {
-            ui.colored_label(theme::CONFLICT, format!("{} in progress", capitalize(op.name())));
+            ui.colored_label(theme::palette(ui).conflict, format!("{} in progress", capitalize(op.name())));
             let conflicts = snap.status.iter().filter(|e| e.is_conflict()).count();
             if conflicts > 0 {
                 ui.weak(format!("{conflicts} conflicted"));
@@ -216,7 +216,7 @@ fn short(sha: &str) -> &str {
 fn bisect_banner(ui: &mut egui::Ui, snap: &Snapshot, b: &oxbow_engine::queries::BisectState, intents: &mut Vec<Intent>) {
     let (bad, good) = (&b.terms.0, &b.terms.1);
     ui.horizontal_wrapped(|ui| {
-        ui.colored_label(theme::HUNK, "Bisecting");
+        ui.colored_label(theme::palette(ui).hunk, "Bisecting");
         match (&b.culprit, &b.bad, b.good.is_empty()) {
             (Some(c), _, _) => {
                 let found = ui.link(format!("First {bad} commit: {} {}", short(c), b.culprit_subject));
@@ -316,7 +316,7 @@ fn stash_item(ui: &mut egui::Ui, label: &str, kind: StashKind, intents: &mut Vec
 
 fn file_row(ui: &mut egui::Ui, entry: &StatusEntry, mono: &egui::FontId, view: &View, intents: &mut Vec<Intent>) {
     let selected = view.selection == Some(Selection::File(entry.path.clone()));
-    let mut job = theme::status_letters(entry.x, entry.y, entry.is_conflict(), entry.is_untracked(), mono);
+    let mut job = theme::status_letters(&theme::palette(ui), entry.x, entry.y, entry.is_conflict(), entry.is_untracked(), mono);
     let name = match &entry.old_path {
         Some(old) => format!("{old} ➡ {}", entry.path),
         None => entry.path.clone(),
@@ -508,7 +508,7 @@ fn local_row(ui: &mut egui::Ui, snap: &Snapshot, b: &LocalBranch, view: &View, i
     let selected = view.selection == Some(Selection::Branch(b.name.clone()));
     let mut text = RichText::new(format!("{}{}", if b.current { "⏺ " } else { "   " }, b.name));
     if b.current {
-        text = text.color(theme::LOCAL_REF).strong();
+        text = text.color(theme::palette(ui).local_ref).strong();
     }
     let response = ui
         .horizontal(|ui| {
@@ -607,7 +607,7 @@ fn remote_row(ui: &mut egui::Ui, snap: &Snapshot, b: &RemoteBranch, view: &View,
     let selected = view.selection == Some(Selection::Remote(b.name.clone()));
     let response = ui
         .horizontal(|ui| {
-            let r = ui.selectable_label(selected, RichText::new(&b.name).color(theme::REMOTE_REF));
+            let r = ui.selectable_label(selected, RichText::new(&b.name).color(theme::palette(ui).remote_ref));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| ui.weak(&b.rel_date));
             r
         })
@@ -645,7 +645,7 @@ fn tag_row(ui: &mut egui::Ui, snap: &Snapshot, t: &Tag, view: &View, intents: &m
     let selected = view.selection == Some(Selection::Tag(t.name.clone()));
     let response = ui
         .horizontal(|ui| {
-            let r = ui.selectable_label(selected, RichText::new(&t.name).color(theme::TAG_REF));
+            let r = ui.selectable_label(selected, RichText::new(&t.name).color(theme::palette(ui).tag_ref));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.weak(&t.rel_date);
                 if t.annotated {
@@ -768,14 +768,14 @@ fn patch_bar(ui: &mut egui::Ui, snap: &Snapshot, view: &View, intents: &mut Vec<
     ui.horizontal(|ui| {
         let files = p.files.keys().cloned().collect::<Vec<_>>().join("\n");
         let what = format!("Patch: {} in {} from {}", plural(p.lines(), "line"), plural(p.files.len(), "file"), short(&p.sha));
-        ui.colored_label(theme::HUNK, what).on_hover_text(format!("{}\n\n{files}", p.subject));
+        ui.colored_label(theme::palette(ui).hunk, what).on_hover_text(format!("{}\n\n{files}", p.subject));
         let cx = Cx { snap, confirm: view.confirm_rewriting_pushed };
         let removal = p.removal();
         let (sha, subject) = (p.sha.clone(), p.subject.clone());
         ui.menu_button("Use it ⏷", |ui| {
             let busy = snap.operation.is_some();
             let Ok(removal) = removal else {
-                ui.colored_label(theme::CONFLICT, removal.err().unwrap_or_default());
+                ui.colored_label(theme::palette(ui).conflict, removal.err().unwrap_or_default());
                 return;
             };
             match source {
@@ -832,7 +832,7 @@ fn cherry_pick_bar(ui: &mut egui::Ui, snap: &Snapshot, view: &View, intents: &mu
     ui.horizontal(|ui| {
         let n = view.cherry_picks.len();
         let list = view.cherry_picks.iter().map(|(sha, subject)| format!("{} {subject}", short(sha))).collect::<Vec<_>>().join("\n");
-        ui.colored_label(theme::HUNK, format!("{} copied", plural(n, "commit"))).on_hover_text(list);
+        ui.colored_label(theme::palette(ui).hunk, format!("{} copied", plural(n, "commit"))).on_hover_text(list);
         let paste = ui.add_enabled(snap.operation.is_none(), egui::Button::new("Paste onto HEAD").small());
         if paste.on_hover_text("Cherry-picks them, oldest first").clicked() {
             let shas: Vec<String> = view.cherry_picks.iter().map(|(s, _)| s.clone()).collect();
@@ -849,7 +849,7 @@ fn cherry_pick_bar(ui: &mut egui::Ui, snap: &Snapshot, view: &View, intents: &mu
 /// The steps a paused interactive rebase still has to apply, newest on top like the commits below them.
 fn todo_steps(ui: &mut egui::Ui, snap: &Snapshot, intents: &mut Vec<Intent>) {
     ui.horizontal(|ui| {
-        ui.colored_label(theme::CONFLICT, format!("Rebase steps still to apply ({})", snap.todo.len()));
+        ui.colored_label(theme::palette(ui).conflict, format!("Rebase steps still to apply ({})", snap.todo.len()));
         ui.weak("right-click a step to change it");
     });
     let mono = egui::TextStyle::Monospace.resolve(ui.style());
@@ -866,7 +866,7 @@ fn todo_steps(ui: &mut egui::Ui, snap: &Snapshot, intents: &mut Vec<Intent>) {
                     StepKind::UpdateRef(_) => "branch",
                 };
                 let fmt = |font: &egui::FontId, color| egui::TextFormat { font_id: font.clone(), color, ..Default::default() };
-                let action_color = if step.action() == Some(TodoAction::Drop) { theme::CONFLICT } else { theme::HUNK };
+                let action_color = if step.action() == Some(TodoAction::Drop) { theme::palette(ui).conflict } else { theme::palette(ui).hunk };
                 let mut job = egui::text::LayoutJob::default();
                 job.append(&format!("{word:<7}"), 0.0, fmt(&mono, action_color));
                 job.append(&step.sha, 6.0, fmt(&mono, weak));
@@ -982,7 +982,7 @@ fn paint_graph(ui: &egui::Ui, rect: egui::Rect, row: &oxbow_engine::graph::Row, 
         if hidden(line.from) && hidden(line.to) {
             continue;
         }
-        let stroke = egui::Stroke::new(1.6, theme::graph_color(line.color));
+        let stroke = egui::Stroke::new(1.6, theme::palette(ui).lane(line.color));
         let (a, b) = match line.part {
             Part::Through => (egui::pos2(x(line.from), top), egui::pos2(x(line.to), bottom)),
             Part::Top => (egui::pos2(x(line.from), top), egui::pos2(x(line.to), mid)),
@@ -1003,7 +1003,7 @@ fn paint_graph(ui: &egui::Ui, rect: egui::Rect, row: &oxbow_engine::graph::Row, 
     }
     if !hidden(row.lane) {
         let center = egui::pos2(x(row.lane), mid);
-        painter.circle(center, 4.0, dot, egui::Stroke::new(1.5, theme::graph_color(row.color)));
+        painter.circle(center, 4.0, dot, egui::Stroke::new(1.5, theme::palette(ui).lane(row.color)));
     }
 }
 
@@ -1016,7 +1016,7 @@ fn commit_row(ui: &mut egui::Ui, snap: &Snapshot, index: usize, lanes: usize, vi
     let response = ui.selectable_label(selected, theme::commit_row_after(ui, c, Some(mark), space));
     if let Some(row) = graph {
         let strip = egui::Rect::from_min_size(egui::pos2(response.rect.left() + ui.spacing().button_padding.x, response.rect.top()), egui::vec2(space, response.rect.height()));
-        paint_graph(ui, strip, row, lanes, theme::mark_color(mark));
+        paint_graph(ui, strip, row, lanes, theme::palette(ui).mark(mark));
     }
     if response.clicked() {
         let modifiers = ui.input(|i| i.modifiers);
