@@ -2,12 +2,19 @@
 
 Oxbow's releases are tagged `oxbow-v<version>`. Each version's section here becomes its release notes. The SlothGit extension's own changelog, up to 2.0.0, is in this repository's history (commit `1877ada`).
 
-## Unreleased
+## 0.1.2
+
+A bug-fix release: 0.1.1 installs update to it on their own when you close Oxbow. Oxbow runs the git that's installed, so install [Git](https://git-scm.com) first.
 
 ### Fixed
 - Long lines in a diff wrap to the width of the pane instead of running off its right edge. They break at a space, or in code after punctuation such as `(` `,` `.`, and their later rows line up under the line's own indentation.
 - The project list fills the start page down to the bottom of the window, instead of a strip that showed one project and a half. Each row is one button the width of the list, with the name on the left and when it was opened on the right; a project whose folder is gone can now be right-clicked to copy its path too.
 - The installer an update downloaded is deleted once it's been used, the next time Oxbow finds nothing newer.
+
+### Downloads
+- **Windows:** `oxbow-0.1.2-windows-x64-setup.exe` installs for your user without admin rights and can add Oxbow to PATH; `oxbow-0.1.2-windows-x64.zip` runs from anywhere. The installer isn't signed yet, so Windows may warn that it's from an unknown publisher.
+- **Linux:** `oxbow-0.1.2-x86_64.AppImage` for most distributions, `oxbow_0.1.2_amd64.deb` for Debian, Ubuntu and their relatives, and `oxbow-0.1.2-linux-x64.tar.gz`.
+- `SHA256SUMS` lists each file's checksum.
 
 ## 0.1.1
 
