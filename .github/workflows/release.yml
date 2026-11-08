@@ -106,7 +106,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           prerelease=""
-          if [[ "${GITHUB_REF_NAME}" == *-* ]]; then prerelease="--prerelease"; fi
+          # A suffix after the version (oxbow-v0.2.0-beta.1) makes a pre-release; the "oxbow-" prefix doesn't count.
+          if [[ "${GITHUB_REF_NAME#oxbow-v}" == *-* ]]; then prerelease="--prerelease"; else prerelease="--latest"; fi
           # Release notes: this version's section of CHANGELOG.md, or GitHub's generated notes when it has none.
           : > notes.md
           if [[ -f CHANGELOG.md ]]; then
