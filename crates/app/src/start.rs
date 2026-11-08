@@ -93,82 +93,68 @@ pub fn show(ui: &mut egui::Ui, projects: &mut Projects, intents: &mut Vec<Intent
         ui.weak("Open a repository to work in");
         ui.add_space(16.0);
     });
-    ui.horizontal(|ui| {
-        ui.add_space(((ui.available_width() - width) / 2.0).max(0.0));
-        ui.vertical(|ui| {
-            ui.set_width(width);
-            ui.horizontal(|ui| {
-                ui.strong("Projects");
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button("New repository…").on_hover_text("Initialize a repository").clicked() {
-                        intents.push(Intent::NewRepo(None));
+    // A column `width` wide, centred, reaching to the bottom of the window so the list can use all of it.
+    let rest = ui.available_rect_before_wrap();
+    let column = egui::Rect::from_min_size(egui::pos2(rest.center().x - width / 2.0, rest.top()), egui::vec2(width, rest.height()));
+    ui.scope_builder(egui::UiBuilder::new().max_rect(column).layout(egui::Layout::top_down(egui::Align::Min)), |ui| {
+        ui.horizontal(|ui| {
+            ui.strong("Projects");
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.button("New repository…").on_hover_text("Initialize a repository").clicked() {
+                    intents.push(Intent::NewRepo(None));
+                }
+                if ui.button("Open folder…").clicked() {
+                    intents.push(Intent::OpenRepo(None));
+                }
+                if projects.list.len() > 6 {
+                    ui.add(egui::TextEdit::singleline(&mut projects.filter).hint_text("Filter").desired_width(160.0));
+                }
+            });
+        });
+        ui.separator();
+        if projects.list.is_empty() {
+            ui.add_space(24.0);
+            ui.vertical_centered(|ui| ui.weak("Repositories you open show up here."));
+            return;
+        }
+        let filter = projects.filter.to_lowercase();
+        let mut forget = None;
+        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+            for recent in &projects.list {
+                let path = recent.path.display().to_string();
+                if !filter.is_empty() && !path.to_lowercase().contains(&filter) {
+                    continue;
+                }
+                let missing = !recent.path.exists();
+                let name = recent.path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| path.clone());
+                let mut job = egui::text::LayoutJob::default();
+                let body = egui::TextStyle::Body.resolve(ui.style());
+                let (text, weak) = (ui.visuals().text_color(), ui.visuals().weak_text_color());
+                let fmt = |size: f32, color| egui::TextFormat { font_id: egui::FontId::new(size, body.family.clone()), color, ..Default::default() };
+                job.append(&name, 0.0, fmt(body.size + 2.0, if missing { weak } else { text }));
+                job.append(&format!("\n{path}"), 0.0, fmt(body.size - 1.0, weak));
+                let when = if missing { "Folder not found".to_owned() } else { ago(recent.opened) };
+                // One button per row, the whole width: the name and path on the left, when it was opened on the right.
+                let row = egui::Button::selectable(false, job).right_text(RichText::new(when).weak()).min_size(egui::vec2(ui.available_width(), 44.0));
+                let r = ui.add(row);
+                if r.clicked() && !missing {
+                    intents.push(Intent::OpenRepo(Some(recent.path.clone())));
+                }
+                r.context_menu(|ui| {
+                    if ui.button("Copy path").clicked() {
+                        ui.ctx().copy_text(path.clone());
+                        ui.close();
                     }
-                    if ui.button("Open folder…").clicked() {
-                        intents.push(Intent::OpenRepo(None));
-                    }
-                    if projects.list.len() > 6 {
-                        ui.add(egui::TextEdit::singleline(&mut projects.filter).hint_text("Filter").desired_width(160.0));
+                    if ui.button("Remove from the list").clicked() {
+                        forget = Some(recent.path.clone());
+                        ui.close();
                     }
                 });
-            });
-            ui.separator();
-            if projects.list.is_empty() {
-                ui.add_space(24.0);
-                ui.vertical_centered(|ui| ui.weak("Repositories you open show up here."));
-                return;
-            }
-            let filter = projects.filter.to_lowercase();
-            let mut forget = None;
-            egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-                ui.with_layout(egui::Layout::top_down_justified(egui::Align::LEFT), |ui| {
-                    for recent in &projects.list {
-                        let path = recent.path.display().to_string();
-                        if !filter.is_empty() && !path.to_lowercase().contains(&filter) {
-                            continue;
-                        }
-                        let missing = !recent.path.exists();
-                        let name = recent.path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| path.clone());
-                        let mut job = egui::text::LayoutJob::default();
-                        let body = egui::TextStyle::Body.resolve(ui.style());
-                        let (text, weak) = (ui.visuals().text_color(), ui.visuals().weak_text_color());
-                        let fmt = |size: f32, color| egui::TextFormat { font_id: egui::FontId::new(size, body.family.clone()), color, ..Default::default() };
-                        job.append(&name, 0.0, fmt(body.size + 2.0, if missing { weak } else { text }));
-                        job.append(&format!("\n{path}"), 0.0, fmt(body.size - 1.0, weak));
-                        let when = if missing { "Folder not found".to_owned() } else { ago(recent.opened) };
-                        let row = ui.horizontal(|ui| {
-                            let r = ui.add_enabled(!missing, egui::Button::selectable(false, job).min_size(egui::vec2(width - 150.0, 44.0)));
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| ui.weak(when));
-                            r
-                        });
-                        let r = row.inner;
-                        if r.clicked() {
-                            intents.push(Intent::OpenRepo(Some(recent.path.clone())));
-                        }
-                        r.context_menu(|ui| {
-                            if ui.button("Copy path").clicked() {
-                                ui.ctx().copy_text(path.clone());
-                                ui.close();
-                            }
-                            if ui.button("Remove from the list").clicked() {
-                                forget = Some(recent.path.clone());
-                                ui.close();
-                            }
-                        });
-                        if missing {
-                            row.response.context_menu(|ui| {
-                                if ui.button("Remove from the list").clicked() {
-                                    forget = Some(recent.path.clone());
-                                    ui.close();
-                                }
-                            });
-                        }
-                    }
-                });
-            });
-            if let Some(path) = forget {
-                projects.forget(&path);
             }
         });
+        if let Some(path) = forget {
+            projects.forget(&path);
+        }
     });
 }
 
@@ -181,5 +167,25 @@ mod tests {
         let list = vec![Recent { path: PathBuf::from("D:/work/oxbow"), opened: 1_700_000_000 }, Recent { path: PathBuf::from("/home/me/site"), opened: 5 }];
         assert_eq!(parse(&to_text(&list)), list);
         assert!(parse("garbage\n").is_empty());
+    }
+
+    /// The list once filled only a scroll area of egui's minimum height (64 pixels) under the buttons, so it showed one
+    /// project and a half, and each row's name sat in the middle of a wide button.
+    #[test]
+    fn the_project_list_fills_the_window_and_its_rows_span_it() {
+        use egui_kittest::kittest::Queryable;
+        let mut projects = Projects::load(None);
+        projects.list = (0..MAX_RECENT).map(|i| Recent { path: PathBuf::from(format!("Z:/nowhere/project-{i}")), opened: 0 }).collect();
+        let size = egui::vec2(1280.0, 820.0);
+        let harness = egui_kittest::Harness::builder().with_size(size).build_ui(move |ui| show(ui, &mut projects, &mut Vec::new()));
+
+        // The scroll bar runs the height of the list, which reaches the bottom of the window.
+        let bar = harness.get_by_role(egui::accesskit::Role::ScrollBar).rect();
+        assert!(bar.height() > 400.0 && bar.bottom() > size.y - 20.0, "the list is {bar:?} in a window {size:?}");
+
+        // A row is as wide as the column, its name on the left and the time on the right.
+        let row = harness.get_by_label_contains("project-0").rect();
+        let projects_label = harness.get_by_label("Projects").rect();
+        assert!((row.left() - projects_label.left()).abs() < 2.0 && row.width() > 700.0, "row {row:?}, heading {projects_label:?}");
     }
 }
