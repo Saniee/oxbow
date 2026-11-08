@@ -357,6 +357,32 @@ fn long_diffs_lay_out_only_what_is_in_view_and_lock_files_start_collapsed() {
     assert!(!shows(&h, "locked-crate"));
 }
 
+/// A long line once ran off the right of the pane, to be read by scrolling sideways.
+#[test]
+fn long_diff_lines_wrap_to_the_pane() {
+    let repo = demo_repo();
+    let words: Vec<String> = (0..120).map(|n| format!("word{n}")).collect();
+    std::fs::write(repo.dir.join("wide.txt"), format!("{}\n", words.join(" "))).unwrap();
+    let mut h = harness(&repo.dir);
+    wait_for_text(&mut h, "wide.txt");
+    h.get_by_label_contains("wide.txt").click();
+    wait_for_text(&mut h, "word0 word1");
+    let mut rows = 0;
+    // And again in a narrower window: the rows follow the pane's width.
+    for width in [1280.0, 900.0] {
+        h.set_size(eframe::egui::vec2(width, 820.0));
+        h.run_steps(3);
+        let diff = h.get_by_label_contains("word0 word1");
+        let (text, rect) = (diff.value().unwrap_or_default(), diff.rect());
+        assert!(rect.right() <= width, "the diff runs off a window {width} wide: {rect:?}");
+        // Every word is there, none cut in two, on rows of their own.
+        assert!(text.lines().count() > rows.max(2), "{text}");
+        rows = text.lines().count();
+        let shown: Vec<&str> = text.split_whitespace().filter(|w| w.starts_with("word")).collect();
+        assert_eq!(shown, words, "{text}");
+    }
+}
+
 #[test]
 fn changes_made_outside_show_up_on_their_own() {
     let repo = demo_repo();

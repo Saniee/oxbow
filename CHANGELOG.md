@@ -5,6 +5,7 @@ Oxbow's releases are tagged `oxbow-v<version>`. Each version's section here beco
 ## Unreleased
 
 ### Fixed
+- Long lines in a diff wrap to the width of the pane instead of running off its right edge. They break at a space, or in code after punctuation such as `(` `,` `.`, and their later rows line up under the line's own indentation.
 - The project list fills the start page down to the bottom of the window, instead of a strip that showed one project and a half. Each row is one button the width of the list, with the name on the left and when it was opened on the right; a project whose folder is gone can now be right-clicked to copy its path too.
 - The installer an update downloaded is deleted once it's been used, the next time Oxbow finds nothing newer.
 

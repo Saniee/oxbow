@@ -309,17 +309,101 @@ fn diff_view(ui: &mut egui::Ui, files: &[DiffFile], salt: &str, mut picker: Opti
     }
 }
 
-/// One hunk. It takes the room of all its lines, but only the lines in view are laid out and drawn, so a diff
+/// Columns before a line's text: "{old:>5} {new:>5} + ".
+const GUTTER: usize = 14;
+
+/// Tabs as spaces, to the next multiple of 4 columns, so each character is one column wide.
+fn expand_tabs(text: &str) -> std::borrow::Cow<'_, str> {
+    if !text.contains('\t') {
+        return text.into();
+    }
+    let mut out = String::with_capacity(text.len() + 8);
+    let mut col = 0;
+    for c in text.chars() {
+        if c == '\t' {
+            let n = 4 - col % 4;
+            out.extend(std::iter::repeat_n(' ', n));
+            col += n;
+        } else {
+            out.push(c);
+            col += 1;
+        }
+    }
+    out.into()
+}
+
+/// A line cut into rows. Rows after the first are `indent` columns narrower, to be drawn under the line's own
+/// indentation as editors do.
+struct Wrapped<'a> {
+    indent: usize,
+    rows: Vec<&'a str>,
+}
+
+/// Where a row of `head` (the first `width` characters of what is left of the line, followed by `next`) may end, as a
+/// byte index: after its last space, or after punctuation that code breaks well at ("call(" "a, " "self." "src/"),
+/// as long as the row keeps a third of its width.
+fn break_after(head: &str, next: char, width: usize) -> Option<usize> {
+    let chars: Vec<(usize, char)> = head.char_indices().collect();
+    (width / 3..chars.len()).rev().find_map(|n| {
+        let (i, c) = chars[n];
+        let after = chars.get(n + 1).map_or(next, |&(_, c)| c);
+        let ok = c == ' ' || (",;.([{/".contains(c) && (after.is_alphanumeric() || "_\"'&*$@".contains(after)));
+        ok.then_some(i + c.len_utf8())
+    })
+}
+
+/// `text` cut into rows of at most `cols` characters, at a space or punctuation where there is one near the end of
+/// the row, mid-word where there isn't. A space that would start a row is dropped; otherwise the rows put back
+/// together are `text`.
+fn wrap(text: &str, cols: usize) -> Wrapped<'_> {
+    let cols = cols.max(2);
+    let lead = text.chars().take_while(|&c| c == ' ').count();
+    let indent = if lead <= cols / 2 { lead } else { 0 };
+    let mut rows = Vec::new();
+    let mut rest = text;
+    loop {
+        let width = if rows.is_empty() { cols } else { cols - indent };
+        let Some((cut, next)) = rest.char_indices().nth(width) else { break };
+        if next == ' ' {
+            rows.push(&rest[..cut]);
+            rest = &rest[cut + 1..];
+            continue;
+        }
+        let at = break_after(&rest[..cut], next, width).unwrap_or(cut);
+        rows.push(&rest[..at]);
+        rest = &rest[at..];
+    }
+    if !rest.is_empty() || rows.is_empty() {
+        rows.push(rest);
+    }
+    Wrapped { indent, rows }
+}
+
+/// How many rows `text` takes when wrapped to `cols`; a quick answer for the many lines that fit.
+fn row_count(text: &str, cols: usize) -> usize {
+    // Bytes are at least characters, so a short line fits without counting.
+    if text.len() <= cols && !text.contains('\t') { 1 } else { wrap(&expand_tabs(text), cols).rows.len() }
+}
+
+/// One hunk. Long lines wrap to the width of the pane, their later rows under the line's text and indentation rather
+/// than the line numbers. The hunk takes the room of all its rows, but only the rows in view are laid out and drawn, so a diff
 /// thousands of lines long scrolls as smoothly as a short one. With `picking` (the file's picked lines, if any),
 /// changed lines can be clicked; returns the index of the one clicked.
 fn hunk_view(ui: &mut egui::Ui, hunk: &oxbow_engine::diff::Hunk, h: usize, picking: Option<Option<&Picks>>) -> Option<usize> {
     let font = egui::TextStyle::Monospace.resolve(ui.style());
     let row = ui.text_style_height(&egui::TextStyle::Monospace);
     let char_width = ui.fonts_mut(|f| f.glyph_width(&font, '0'));
-    // Line numbers and sign: "{old:>5} {new:>5} + ".
-    let widest = hunk.lines.iter().map(|l| l.text.chars().count() + 14).max().unwrap_or(0).max(hunk.header.chars().count());
-    let rows = hunk.lines.len() + 1;
-    let width = (widest as f32 * char_width).max(ui.available_width());
+    let cols = ((ui.available_width() / char_width).floor() as usize).saturating_sub(GUTTER).max(20);
+    let width = ui.available_width().max((cols + GUTTER) as f32 * char_width);
+
+    // Entry 0 is the header, entry j + 1 is line j; starts[k] is entry k's first row, and the last one is the total.
+    let mut starts = Vec::with_capacity(hunk.lines.len() + 2);
+    starts.push(0);
+    starts.push(row_count(&hunk.header, cols + GUTTER));
+    for line in &hunk.lines {
+        starts.push(starts[starts.len() - 1] + row_count(&line.text, cols));
+    }
+    let rows = starts[starts.len() - 1];
     let (rect, _) = ui.allocate_exact_size(egui::vec2(width, rows as f32 * row), egui::Sense::hover());
 
     let clip = ui.clip_rect();
@@ -331,21 +415,27 @@ fn hunk_view(ui: &mut egui::Ui, hunk: &oxbow_engine::diff::Hunk, h: usize, picki
     if first >= last {
         return None;
     }
+    // The entries with a row in view: from the one holding row `first` to the one holding row `last - 1`.
+    let entries = starts.partition_point(|&s| s <= first) - 1..starts.partition_point(|&s| s < last);
+    let entry_rect = |k: usize| {
+        let top = rect.top() + starts[k] as f32 * row;
+        egui::Rect::from_min_size(egui::pos2(rect.left(), top), egui::vec2(rect.width(), (starts[k + 1] - starts[k]) as f32 * row))
+    };
 
     // Picking: each visible changed line is clickable, and picked ones are marked in the gutter.
     let mut clicked = None;
     if let Some(picked) = picking {
-        for i in first.max(1)..last {
-            let j = i - 1;
+        for k in entries.start.max(1)..entries.end {
+            let j = k - 1;
             if !matches!(hunk.lines[j].kind, LineKind::Added | LineKind::Removed) {
                 continue;
             }
-            let line_rect = egui::Rect::from_min_size(egui::pos2(rect.left(), rect.top() + i as f32 * row), egui::vec2(rect.width(), row));
+            let line_rect = entry_rect(k);
             let response = ui.interact(line_rect, ui.scope_id().with(("pick", h, j)), egui::Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand);
             let is_picked = picked.is_some_and(|p| p.contains(&(h, j)));
             if is_picked {
                 ui.painter().rect_filled(line_rect, 0.0, ui.visuals().selection.bg_fill.gamma_multiply(0.45));
-                ui.painter().rect_filled(egui::Rect::from_min_size(line_rect.min, egui::vec2(3.0, row)), 0.0, theme::palette(ui).hunk);
+                ui.painter().rect_filled(egui::Rect::from_min_size(line_rect.min, egui::vec2(3.0, line_rect.height())), 0.0, theme::palette(ui).hunk);
             } else if response.hovered() {
                 ui.painter().rect_filled(line_rect, 0.0, ui.visuals().widgets.hovered.weak_bg_fill.gamma_multiply(0.5));
             }
@@ -360,9 +450,17 @@ fn hunk_view(ui: &mut egui::Ui, hunk: &oxbow_engine::diff::Hunk, h: usize, picki
     let weak = ui.visuals().weak_text_color();
     let fmt = |color: Color32, background: Color32| TextFormat { font_id: font.clone(), color, background, ..Default::default() };
     let mut job = LayoutJob::default();
-    for i in first..last {
-        let Some(line) = i.checked_sub(1).map(|j| &hunk.lines[j]) else {
-            job.append(&format!("{}\n", hunk.header), 0.0, fmt(colors.hunk, Color32::TRANSPARENT));
+    // Rows of an entry that are in view; the first entry may start above the view, the last end below it.
+    let in_view = |k: usize, n: usize| first.saturating_sub(starts[k]).min(n)..(last - starts[k]).min(n);
+    for k in entries.clone() {
+        let Some(line) = k.checked_sub(1).map(|j| &hunk.lines[j]) else {
+            let text = expand_tabs(&hunk.header);
+            let wrapped = wrap(&text, cols + GUTTER);
+            let shown = in_view(k, wrapped.rows.len());
+            for (r, part) in wrapped.rows.iter().enumerate().take(shown.end).skip(shown.start) {
+                let indent = if r == 0 { 0 } else { wrapped.indent };
+                job.append(&format!("{:indent$}{part}\n", ""), 0.0, fmt(colors.hunk, Color32::TRANSPARENT));
+            }
             continue;
         };
         let num = |n: Option<u32>| n.map(|n| format!("{n:>5}")).unwrap_or_else(|| "     ".into());
@@ -372,14 +470,72 @@ fn hunk_view(ui: &mut egui::Ui, hunk: &oxbow_engine::diff::Hunk, h: usize, picki
             LineKind::Context => (' ', Color32::TRANSPARENT),
             LineKind::Note => ('\\', Color32::TRANSPARENT),
         };
-        job.append(&format!("{} {} ", num(line.old), num(line.new)), 0.0, fmt(weak, bg));
         let color = if line.kind == LineKind::Note { weak } else { text_color };
-        job.append(&format!("{sign} {}\n", line.text), 0.0, fmt(color, bg));
+        let text = expand_tabs(&line.text);
+        let wrapped = wrap(&text, cols);
+        let shown = in_view(k, wrapped.rows.len());
+        for (r, part) in wrapped.rows.iter().enumerate().take(shown.end).skip(shown.start) {
+            if r == 0 {
+                job.append(&format!("{} {} ", num(line.old), num(line.new)), 0.0, fmt(weak, bg));
+                job.append(&format!("{sign} {part}\n"), 0.0, fmt(color, bg));
+            } else {
+                job.append(&format!("{:w$}{part}\n", "", w = GUTTER + wrapped.indent), 0.0, fmt(color, bg));
+            }
+        }
     }
-    let top = rect.top() + first as f32 * row;
-    let visible = egui::Rect::from_min_max(egui::pos2(rect.left(), top), egui::pos2(rect.right(), rect.top() + last as f32 * row));
+    let visible = egui::Rect::from_min_max(egui::pos2(rect.left(), rect.top() + first as f32 * row), egui::pos2(rect.right(), rect.top() + last as f32 * row));
     let place = egui::UiBuilder::new().max_rect(visible).layout(egui::Layout::top_down(egui::Align::Min));
-    // While picking, the text must not take the clicks for selecting it.
+    // While picking, the text must not take the clicks for selecting it. The rows are already cut to fit, so the label
+    // must not wrap them again.
     ui.scope_builder(place, |ui| ui.add(egui::Label::new(job).wrap_mode(egui::TextWrapMode::Extend).selectable(picking.is_none())));
     clicked
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rows(text: &str, cols: usize) -> Vec<&str> {
+        wrap(text, cols).rows
+    }
+
+    #[test]
+    fn long_lines_wrap_at_spaces_and_punctuation_and_keep_their_text() {
+        assert_eq!(rows("let total = first_value + second_value;", 16), ["let total = ", "first_value + ", "second_value;"]);
+        // A word longer than a row is cut where the row ends.
+        assert_eq!(rows("abcdefghij", 4), ["abcd", "efgh", "ij"]);
+        // A full row followed by a space breaks there, and the next row doesn't start with the space.
+        assert_eq!(rows("abcd efgh", 4), ["abcd", "efgh"]);
+        // Code without spaces breaks after punctuation, but not inside "::" or "->".
+        assert_eq!(rows("egui::Layout::top_down(egui::Align::Min)", 24), ["egui::Layout::top_down(", "egui::Align::Min)"]);
+        assert_eq!(rows("a->b->c->d->e", 6), ["a->b->", "c->d->", "e"]);
+        assert_eq!(rows("", 10), [""]);
+        assert_eq!(rows("short", 10), ["short"]);
+        assert_eq!(rows("é".repeat(5).as_str(), 2), ["éé", "éé", "é"]);
+        assert_eq!(row_count("short", 10), 1);
+        assert_eq!(row_count("abcdefghij", 4), 3);
+        // Whatever the width, every row fits and nothing is lost but spaces at breaks.
+        let line = "        let fmt = |size: f32, color| egui::TextFormat { font_id: egui::FontId::new(size, body.family.clone()), color };";
+        for cols in 2..80 {
+            let w = wrap(line, cols);
+            assert!(w.rows.iter().enumerate().all(|(r, row)| row.chars().count() <= if r == 0 { cols } else { cols - w.indent }), "{cols}");
+            assert_eq!(w.rows.concat().replace(' ', ""), line.replace(' ', ""), "{cols}");
+        }
+    }
+
+    #[test]
+    fn later_rows_keep_the_lines_indentation_unless_it_is_most_of_the_row() {
+        let w = wrap("    call(first_argument, second_argument)", 24);
+        assert_eq!((w.indent, w.rows), (4, vec!["    call(first_argument,", "second_argument)"]));
+        assert_eq!(wrap(&format!("{}x y", " ".repeat(12)), 10).indent, 0);
+    }
+
+    #[test]
+    fn tabs_become_spaces_to_the_next_stop() {
+        assert_eq!(expand_tabs("\tx"), "    x");
+        assert_eq!(expand_tabs("ab\tc"), "ab  c");
+        assert_eq!(expand_tabs("no tabs"), "no tabs");
+        // A tab counts as its columns, so a line of tabs can need more than one row.
+        assert_eq!(row_count("\t\t\t", 8), 2);
+    }
 }
