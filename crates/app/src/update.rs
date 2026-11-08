@@ -337,7 +337,11 @@ impl Updater {
         self.pending = None;
         match done {
             Done::Checked(Err(e)) => self.state = if self.manual { State::Failed(e) } else { State::Idle },
-            Done::Checked(Ok(None)) => self.state = if self.manual { State::UpToDate } else { State::Idle },
+            Done::Checked(Ok(None)) => {
+                // Nothing newer: an installer downloaded before has done its job (or is out of date).
+                let _ = std::fs::remove_dir_all(download_dir());
+                self.state = if self.manual { State::UpToDate } else { State::Idle };
+            }
             Done::Checked(Ok(Some(release))) => {
                 if self.auto_fixes && self.install.installs_quietly() && release.version.is_fix_for(Version::current()) {
                     self.start_download(release, false);

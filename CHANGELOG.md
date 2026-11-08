@@ -2,6 +2,11 @@
 
 Oxbow's releases are tagged `oxbow-v<version>`. Each version's section here becomes its release notes. The SlothGit extension's own changelog, up to 2.0.0, is in this repository's history (commit `1877ada`).
 
+## Unreleased
+
+### Fixed
+- The installer an update downloaded is deleted once it's been used, the next time Oxbow finds nothing newer.
+
 ## 0.1.1
 
 The first release of Oxbow, a desktop Git workbench and the successor to the SlothGit VS Code extension. It's still young: try it on repositories you have a copy of, and report anything odd at https://github.com/Saniee/oxbow/issues.
