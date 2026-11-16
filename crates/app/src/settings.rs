@@ -24,11 +24,38 @@ pub struct Prefs {
     pub check_updates: bool,
     /// Download and install bug-fix versions (same major and minor) without asking.
     pub auto_update: bool,
+    /// The graphics API the window draws with; read once at startup, so a change needs a restart.
+    pub graphics: Graphics,
 }
+
+/// Which graphics API wgpu draws with.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Graphics {
+    /// DirectX 12 on Windows, wgpu's own pick elsewhere.
+    Auto,
+    DirectX12,
+    Vulkan,
+}
+
+impl Graphics {
+    /// The value for wgpu's `WGPU_BACKEND`, or None to leave wgpu to choose.
+    pub fn backend(self) -> Option<&'static str> {
+        match self {
+            Graphics::Auto => cfg!(windows).then_some("dx12"),
+            Graphics::DirectX12 => Some("dx12"),
+            Graphics::Vulkan => Some("vulkan"),
+        }
+    }
+}
+
+#[cfg(windows)]
+const GRAPHICS: &[(Graphics, &str, &str)] = &[(Graphics::Auto, "auto", "Automatic (DirectX 12)"), (Graphics::DirectX12, "dx12", "DirectX 12"), (Graphics::Vulkan, "vulkan", "Vulkan")];
+#[cfg(not(windows))]
+const GRAPHICS: &[(Graphics, &str, &str)] = &[(Graphics::Auto, "auto", "Automatic"), (Graphics::Vulkan, "vulkan", "Vulkan")];
 
 impl Default for Prefs {
     fn default() -> Self {
-        Self { engine: Settings::default(), confirm_rewriting_pushed: true, watch_files: true, panel_sizes: [0.34, 0.2, 0.34, 0.12], theme: theme::Choice::System, check_updates: true, auto_update: true }
+        Self { engine: Settings::default(), confirm_rewriting_pushed: true, watch_files: true, panel_sizes: [0.34, 0.2, 0.34, 0.12], theme: theme::Choice::System, check_updates: true, auto_update: true, graphics: Graphics::Auto }
     }
 }
 
@@ -83,6 +110,7 @@ impl Prefs {
                 "watch_files" => p.watch_files = flag(),
                 "check_updates" => p.check_updates = flag(),
                 "auto_update" => p.auto_update = flag(),
+                "graphics" => p.graphics = GRAPHICS.iter().find(|g| g.1 == value).map_or(p.graphics, |g| g.0),
                 "theme" => p.theme = theme::THEMES.iter().find(|t| t.1 == value).map_or(p.theme, |t| t.0),
                 "panel_sizes" => {
                     let sizes: Vec<f32> = value.split(',').filter_map(|v| v.trim().parse().ok()).collect();
@@ -104,7 +132,7 @@ impl Prefs {
             "# Oxbow settings. Edit here or in the app's Settings window.\n\
              commit_limit = {}\nreflog_limit = {}\nmain_branches = {}\nbranch_sort = {sort}\nupdate_refs = {update}\n\
              confirm_rewriting_pushed = {}\nwatch_files = {}\npanel_sizes = {}\ntheme = {}\n\
-             check_updates = {}\nauto_update = {}\n",
+             check_updates = {}\nauto_update = {}\ngraphics = {}\n",
             e.commit_limit,
             e.reflog_limit,
             e.main_branches.join(", "),
@@ -114,6 +142,7 @@ impl Prefs {
             key_of(&theme::THEMES, self.theme),
             bool_text(self.check_updates),
             bool_text(self.auto_update),
+            key_of(GRAPHICS, self.graphics),
         )
     }
 
@@ -191,6 +220,12 @@ pub fn show(ctx: &egui::Context, editor: &mut Editor, path: Option<&Path>, updat
                 "When history is rewritten, also move other local branches that point at the rewritten commits (git rebase --update-refs, which needs git 2.38 or newer). Branches checked out in another worktree are left alone.",
             );
             changed |= combo(ui, "update_refs", &mut d.engine.update_refs, &UPDATE_REFS);
+            ui.end_row();
+
+            ui.label("Graphics").on_hover_text(
+                "The API Oxbow draws with. If the window flickers (seen on Windows 11 with Intel integrated graphics when Vulkan is used), choose DirectX 12; if that misbehaves, try Vulkan. Takes effect the next time Oxbow starts.",
+            );
+            changed |= combo(ui, "graphics", &mut d.graphics, GRAPHICS);
             ui.end_row();
         });
         ui.add_space(8.0);

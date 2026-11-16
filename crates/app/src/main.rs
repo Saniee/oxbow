@@ -23,6 +23,14 @@ fn main() -> eframe::Result {
     if let Some(code) = oxbow_engine::editor::run_if_requested() {
         std::process::exit(code);
     }
+    // The graphics API is a preference (Settings, Graphics): wgpu may pick Vulkan, whose swapchain flickers on some
+    // Windows 11 drivers (Intel UHD), so Automatic means DirectX 12 there. An explicit WGPU_BACKEND still wins.
+    if std::env::var_os("WGPU_BACKEND").is_none()
+        && let Some(backend) = settings::Prefs::default_path().map(|p| settings::Prefs::load(&p)).unwrap_or_default().graphics.backend()
+    {
+        // SAFETY: this runs first in main, before any other thread exists.
+        unsafe { std::env::set_var("WGPU_BACKEND", backend) };
+    }
     // `oxbow <path>` opens that repository (or offers to create one there); without it, the project list.
     let start = std::env::args_os().nth(1).map(PathBuf::from);
     let mut viewport = egui::ViewportBuilder::default().with_title("Oxbow").with_app_id("oxbow").with_inner_size([1280.0, 820.0]).with_min_inner_size([800.0, 500.0]);
