@@ -2,3 +2,4 @@ target/
 .env
 dev/
 /dist/
+/out-test
