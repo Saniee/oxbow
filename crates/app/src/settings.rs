@@ -33,6 +33,7 @@ pub struct Prefs {
 pub enum Graphics {
     /// DirectX 12 on Windows, wgpu's own pick elsewhere.
     Auto,
+    #[cfg(windows)]
     DirectX12,
     Vulkan,
 }
@@ -42,6 +43,7 @@ impl Graphics {
     pub fn backend(self) -> Option<&'static str> {
         match self {
             Graphics::Auto => cfg!(windows).then_some("dx12"),
+            #[cfg(windows)]
             Graphics::DirectX12 => Some("dx12"),
             Graphics::Vulkan => Some("vulkan"),
         }
