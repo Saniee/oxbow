@@ -2,6 +2,21 @@
 
 Oxbow's releases are tagged `oxbow-v<version>`. Each version's section here becomes its release notes. The SlothGit extension's own changelog, up to 2.0.0, is in this repository's history (commit `1877ada`).
 
+## 0.1.3
+
+A hotfix: 0.1.2 installs update to it on their own when you close Oxbow. Oxbow runs the git that's installed, so install [Git](https://git-scm.com) first.
+
+### Fixed
+- The window no longer flickers on Windows 11 with Intel integrated graphics (#1). Oxbow now draws with DirectX 12 on Windows instead of letting the graphics library pick Vulkan, whose swapchain flickers on some drivers.
+
+### Added
+- **Settings, Graphics:** choose Automatic (DirectX 12 on Windows), DirectX 12 or Vulkan, in case another machine does better with a different one. It takes effect the next time Oxbow starts, and setting `WGPU_BACKEND` still overrides it.
+
+### Downloads
+- **Windows:** `oxbow-0.1.3-windows-x64-setup.exe` installs for your user without admin rights and can add Oxbow to PATH; `oxbow-0.1.3-windows-x64.zip` runs from anywhere. The installer isn't signed yet, so Windows may warn that it's from an unknown publisher.
+- **Linux:** `oxbow-0.1.3-x86_64.AppImage` for most distributions, `oxbow_0.1.3_amd64.deb` for Debian, Ubuntu and their relatives, and `oxbow-0.1.3-linux-x64.tar.gz`.
+- `SHA256SUMS` lists each file's checksum.
+
 ## 0.1.2
 
 A bug-fix release: 0.1.1 installs update to it on their own when you close Oxbow. Oxbow runs the git that's installed, so install [Git](https://git-scm.com) first.
